@@ -108,3 +108,9 @@ class FavoriteRequest(BaseModel):
 
 class BoardFavoriteRequest(BaseModel):
     board_id: int
+
+
+class SimpleSearchResponse(BaseModel):
+    keyword: str
+    posts: list[PostOut]
+    replies: list[ReplyOut]

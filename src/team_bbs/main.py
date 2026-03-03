@@ -174,3 +174,8 @@ def list_board_favorites(
     size: int = Query(10, ge=1, le=100),
 ) -> dict:
     return services.list_board_favorites(user_id=user_id, page=page, size=size)
+
+
+@app.get("/search", response_model=schemas.SimpleSearchResponse)
+def simple_search(keyword: str = Query(..., min_length=1)) -> dict:
+    return services.simple_search(keyword=keyword)

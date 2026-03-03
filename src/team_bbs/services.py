@@ -439,3 +439,21 @@ def list_board_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
             reverse=True,
         )
         return paginate([_board_out(board) for board in boards], page, size)
+
+
+def simple_search(keyword: str) -> dict[str, Any]:
+    search_keyword = keyword.strip()
+    if not search_keyword:
+        return {"keyword": keyword, "posts": [], "replies": []}
+
+    with SessionLocal() as db:
+        query = f"%{search_keyword.lower()}%"
+
+        posts = db.execute(select(Post).where(func.lower(Post.title).like(query))).scalars().all()
+        replies = db.execute(select(Reply).where(func.lower(Reply.content).like(query))).scalars().all()
+
+        return {
+            "keyword": keyword,
+            "posts": [_post_out(post) for post in posts],
+            "replies": [_reply_out(reply) for reply in replies],
+        }
