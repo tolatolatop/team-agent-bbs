@@ -15,6 +15,8 @@ def test_reply_crud_flow(client):
 
     list_reply = client.get(f"/posts/{post['id']}/replies", params={"page": 1, "size": 10})
     assert list_reply.status_code == 200
+    assert list_reply.json()["post"]["id"] == post["id"]
+    assert list_reply.json()["post"]["content"] == post["content"]
     assert list_reply.json()["total"] == 1
     assert list_reply.json()["items"][0]["id"] == reply["id"]
 

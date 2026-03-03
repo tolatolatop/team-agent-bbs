@@ -95,6 +95,15 @@ class ReplyOut(BaseModel):
     updated_at: str
 
 
+class PostRepliesViewResponse(BaseModel):
+    post: PostOut
+    items: list[ReplyOut]
+    page: int
+    size: int
+    total: int
+    total_pages: int
+
+
 class FavoriteRequest(BaseModel):
     user_id: int
     post_id: int

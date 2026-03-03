@@ -43,6 +43,26 @@ def _get_by_id(items: list[dict[str, Any]], item_id: int) -> dict[str, Any] | No
     return None
 
 
+def _build_post_last_activity_map(db: dict[str, Any]) -> dict[int, str]:
+    latest_reply_map: dict[int, str] = {}
+    for reply in db["replies"]:
+        post_id = reply["post_id"]
+        reply_updated_at = reply["updated_at"]
+        current_latest = latest_reply_map.get(post_id)
+        if current_latest is None or reply_updated_at > current_latest:
+            latest_reply_map[post_id] = reply_updated_at
+
+    activity_map: dict[int, str] = {}
+    for post in db["posts"]:
+        post_updated_at = post["updated_at"]
+        latest_reply_at = latest_reply_map.get(post["id"])
+        if latest_reply_at is None or post_updated_at >= latest_reply_at:
+            activity_map[post["id"]] = post_updated_at
+        else:
+            activity_map[post["id"]] = latest_reply_at
+    return activity_map
+
+
 def register_user(payload: dict[str, Any]) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         for user in db["users"]:
@@ -128,7 +148,23 @@ def create_board(payload: dict[str, Any]) -> dict[str, Any]:
 def list_boards() -> list[dict[str, Any]]:
     db = load_db()
     boards = list(db["boards"])
-    boards.sort(key=lambda item: item["created_at"], reverse=True)
+    post_activity_map = _build_post_last_activity_map(db)
+    board_latest_activity: dict[int, str] = {}
+    for post in db["posts"]:
+        board_id = post["board_id"]
+        post_activity = post_activity_map[post["id"]]
+        current_latest = board_latest_activity.get(board_id)
+        if current_latest is None or post_activity > current_latest:
+            board_latest_activity[board_id] = post_activity
+
+    boards.sort(
+        key=lambda board: (
+            board_latest_activity.get(board["id"]) is not None,
+            board_latest_activity.get(board["id"], ""),
+            board["created_at"],
+        ),
+        reverse=True,
+    )
     return boards
 
 
@@ -167,6 +203,7 @@ def create_post(payload: dict[str, Any]) -> dict[str, Any]:
 def list_posts(page: int, size: int, board_id: int | None = None, keyword: str | None = None) -> dict[str, Any]:
     db = load_db()
     posts = list(db["posts"])
+    post_activity_map = _build_post_last_activity_map(db)
 
     if board_id is not None:
         posts = [post for post in posts if post["board_id"] == board_id]
@@ -181,7 +218,7 @@ def list_posts(page: int, size: int, board_id: int | None = None, keyword: str |
             or any(query in tag.lower() for tag in post.get("tags", []))
         ]
 
-    posts.sort(key=lambda item: item["created_at"], reverse=True)
+    posts.sort(key=lambda item: post_activity_map.get(item["id"], item["updated_at"]), reverse=True)
     return paginate(posts, page, size)
 
 
@@ -249,12 +286,15 @@ def create_reply(post_id: int, payload: dict[str, Any]) -> dict[str, Any]:
 
 def list_replies(post_id: int, page: int, size: int) -> dict[str, Any]:
     db = load_db()
-    if _get_by_id(db["posts"], post_id) is None:
+    post = _get_by_id(db["posts"], post_id)
+    if post is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
 
     replies = [item for item in db["replies"] if item["post_id"] == post_id]
-    replies.sort(key=lambda item: item["created_at"], reverse=True)
-    return paginate(replies, page, size)
+    replies.sort(key=lambda item: item["updated_at"], reverse=True)
+    result = paginate(replies, page, size)
+    result["post"] = post
+    return result
 
 
 def update_reply(reply_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -320,6 +360,7 @@ def list_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
     db = load_db()
     if _get_by_id(db["users"], user_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    post_activity_map = _build_post_last_activity_map(db)
 
     post_map = {post["id"]: post for post in db["posts"]}
     favorite_posts = []
@@ -327,5 +368,5 @@ def list_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
         if favorite["user_id"] == user_id and favorite["post_id"] in post_map:
             favorite_posts.append(post_map[favorite["post_id"]])
 
-    favorite_posts.sort(key=lambda item: item["created_at"], reverse=True)
+    favorite_posts.sort(key=lambda item: post_activity_map.get(item["id"], item["updated_at"]), reverse=True)
     return paginate(favorite_posts, page, size)

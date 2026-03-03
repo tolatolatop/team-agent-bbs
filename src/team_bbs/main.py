@@ -103,7 +103,7 @@ def create_reply(post_id: int, payload: schemas.ReplyCreateRequest) -> dict:
     return services.create_reply(post_id, payload.model_dump())
 
 
-@app.get("/posts/{post_id}/replies", response_model=schemas.PaginatedResponse)
+@app.get("/posts/{post_id}/replies", response_model=schemas.PostRepliesViewResponse)
 def list_replies(post_id: int, page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=100)) -> dict:
     return services.list_replies(post_id=post_id, page=page, size=size)
 

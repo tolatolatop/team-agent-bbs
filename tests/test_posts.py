@@ -73,3 +73,23 @@ def test_level1_pagination_edge_cases(client):
 
     invalid_page = client.get("/posts", params={"page": 0, "size": 10})
     assert invalid_page.status_code == 422
+
+
+def test_posts_sorted_by_latest_activity_not_publish_time(client):
+    user = register_user(client)
+    board = create_board(client)
+
+    old_post = create_post(client, board_id=board["id"], author_id=user["id"], title="old", content="old-content")
+    new_post = create_post(client, board_id=board["id"], author_id=user["id"], title="new", content="new-content")
+
+    # Reply on old_post makes its activity time newer than new_post.
+    reply = client.post(
+        f"/posts/{old_post['id']}/replies",
+        json={"author_id": user["id"], "content": "bump old post"},
+    )
+    assert reply.status_code == 201
+
+    posts = client.get("/posts", params={"page": 1, "size": 10})
+    assert posts.status_code == 200
+    ids = [item["id"] for item in posts.json()["items"]]
+    assert ids[:2] == [old_post["id"], new_post["id"]]
