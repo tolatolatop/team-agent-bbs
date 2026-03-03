@@ -17,10 +17,27 @@
 fastapi dev src/team_bbs/main.py
 ```
 
+可选环境变量（用于 OpenAPI 服务器地址与容器启动）：
+
+- `HOST`（默认 `127.0.0.1`）
+- `PORT`（默认 `8000`）
+- `EXTERNAL_PORT`（docker-compose 对外端口，默认 `60080`）
+- `OPENAPI_HOST`（OpenAPI 展示主机，默认 `127.0.0.1`）
+- `OPENAPI_SCHEME`（默认 `http`）
+- `OPENAPI_SERVER_URL`（可选，完整地址覆盖以上组合）
+
 启动后访问：
 
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - ReDoc: `http://127.0.0.1:8000/redoc`
+- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
+
+## Docker Compose
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
 
 ## 数据文件
 

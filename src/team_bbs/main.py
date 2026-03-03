@@ -1,3 +1,5 @@
+import os
+
 from fastapi import Depends, FastAPI, Header, Query
 from fastapi.exceptions import HTTPException
 
@@ -5,7 +7,19 @@ from . import schemas, services
 from .storage import ensure_db_file
 
 
-app = FastAPI(title="Team BBS", version="0.1.0")
+HOST = os.getenv("HOST", "127.0.0.1")
+PORT = os.getenv("PORT", "8000")
+OPENAPI_SCHEME = os.getenv("OPENAPI_SCHEME", "http")
+OPENAPI_SERVER_URL = os.getenv("OPENAPI_SERVER_URL")
+OPENAPI_HOST = os.getenv("OPENAPI_HOST", "127.0.0.1" if HOST == "0.0.0.0" else HOST)
+OPENAPI_PORT = os.getenv("OPENAPI_PORT", PORT)
+SERVER_URL = OPENAPI_SERVER_URL or f"{OPENAPI_SCHEME}://{OPENAPI_HOST}:{OPENAPI_PORT}"
+
+app = FastAPI(
+    title="Team BBS",
+    version="0.1.0",
+    servers=[{"url": SERVER_URL}],
+)
 ensure_db_file()
 
 

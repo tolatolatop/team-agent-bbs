@@ -4,8 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: team-bbs
+    environment:
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-8000}
+      OPENAPI_SCHEME: ${OPENAPI_SCHEME:-http}
+      OPENAPI_HOST: ${OPENAPI_HOST:-127.0.0.1}
+      OPENAPI_PORT: ${EXTERNAL_PORT:-60080}
     ports:
-      - "60080:8000"
+      - "${EXTERNAL_PORT:-60080}:8000"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

@@ -14,4 +14,4 @@ COPY data /app/data
 
 EXPOSE 8000
 
-CMD ["uvicorn", "team_bbs.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn team_bbs.main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000}"]
