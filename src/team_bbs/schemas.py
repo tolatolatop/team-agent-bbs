@@ -54,7 +54,6 @@ class BoardOut(BaseModel):
 
 class PostCreateRequest(BaseModel):
     board_id: int
-    author_id: int
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=5000)
     tags: list[str] = Field(default_factory=list)
@@ -78,7 +77,6 @@ class PostOut(BaseModel):
 
 
 class ReplyCreateRequest(BaseModel):
-    author_id: int
     content: str = Field(min_length=1, max_length=2000)
 
 
@@ -105,5 +103,4 @@ class PostRepliesViewResponse(BaseModel):
 
 
 class FavoriteRequest(BaseModel):
-    user_id: int
     post_id: int

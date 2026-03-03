@@ -1,15 +1,16 @@
-from .helpers import create_board, create_post, register_user
+from .helpers import auth_headers, create_board, create_post, login_user, register_user
 
 
 def test_favorite_add_list_remove(client):
     user = register_user(client)
-    board = create_board(client)
-    post = create_post(client, board_id=board["id"], author_id=user["id"])
+    token = login_user(client)["token"]
+    board = create_board(client, token=token)
+    post = create_post(client, token=token, board_id=board["id"])
 
-    add = client.post("/favorites", json={"user_id": user["id"], "post_id": post["id"]})
+    add = client.post("/favorites", json={"post_id": post["id"]}, headers=auth_headers(token))
     assert add.status_code == 201
 
-    dup = client.post("/favorites", json={"user_id": user["id"], "post_id": post["id"]})
+    dup = client.post("/favorites", json={"post_id": post["id"]}, headers=auth_headers(token))
     assert dup.status_code == 409
 
     fav_list = client.get("/favorites", params={"user_id": user["id"], "page": 1, "size": 10})
@@ -17,7 +18,7 @@ def test_favorite_add_list_remove(client):
     assert fav_list.json()["total"] == 1
     assert fav_list.json()["items"][0]["id"] == post["id"]
 
-    remove = client.delete("/favorites", params={"user_id": user["id"], "post_id": post["id"]})
+    remove = client.delete("/favorites", params={"post_id": post["id"]}, headers=auth_headers(token))
     assert remove.status_code == 200
 
     fav_list_after = client.get("/favorites", params={"user_id": user["id"], "page": 1, "size": 10})
@@ -27,20 +28,22 @@ def test_favorite_add_list_remove(client):
 
 def test_favorites_sorted_by_post_latest_activity(client):
     user = register_user(client)
-    board = create_board(client)
+    token = login_user(client)["token"]
+    board = create_board(client, token=token)
 
-    old_post = create_post(client, board_id=board["id"], author_id=user["id"], title="old", content="old-content")
-    new_post = create_post(client, board_id=board["id"], author_id=user["id"], title="new", content="new-content")
+    old_post = create_post(client, token=token, board_id=board["id"], title="old", content="old-content")
+    new_post = create_post(client, token=token, board_id=board["id"], title="new", content="new-content")
 
-    add_old = client.post("/favorites", json={"user_id": user["id"], "post_id": old_post["id"]})
+    add_old = client.post("/favorites", json={"post_id": old_post["id"]}, headers=auth_headers(token))
     assert add_old.status_code == 201
-    add_new = client.post("/favorites", json={"user_id": user["id"], "post_id": new_post["id"]})
+    add_new = client.post("/favorites", json={"post_id": new_post["id"]}, headers=auth_headers(token))
     assert add_new.status_code == 201
 
     # Reply on old_post updates its activity, so favorites should return old_post first.
     reply = client.post(
         f"/posts/{old_post['id']}/replies",
-        json={"author_id": user["id"], "content": "bump old post"},
+        json={"content": "bump old post"},
+        headers=auth_headers(token),
     )
     assert reply.status_code == 201
 
@@ -48,3 +51,23 @@ def test_favorites_sorted_by_post_latest_activity(client):
     assert fav_list.status_code == 200
     ids = [item["id"] for item in fav_list.json()["items"]]
     assert ids[:2] == [old_post["id"], new_post["id"]]
+
+
+def test_favorite_remove_only_affects_current_user(client):
+    user1 = register_user(client, username="user001", password="pass001")
+    register_user(client, username="user002", password="pass002")
+    token1 = login_user(client, username="user001", password="pass001")["token"]
+    token2 = login_user(client, username="user002", password="pass002")["token"]
+
+    board = create_board(client, token=token1)
+    post = create_post(client, token=token1, board_id=board["id"])
+
+    add_user1 = client.post("/favorites", json={"post_id": post["id"]}, headers=auth_headers(token1))
+    assert add_user1.status_code == 201
+
+    remove_user2 = client.delete("/favorites", params={"post_id": post["id"]}, headers=auth_headers(token2))
+    assert remove_user2.status_code == 404
+
+    user1_list = client.get("/favorites", params={"user_id": user1["id"], "page": 1, "size": 10})
+    assert user1_list.status_code == 200
+    assert user1_list.json()["total"] == 1

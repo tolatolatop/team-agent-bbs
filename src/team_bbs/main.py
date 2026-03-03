@@ -37,6 +37,10 @@ def current_user(authorization: str | None = Header(default=None)) -> dict:
     return services.get_me_by_token(token)
 
 
+def current_user_id(user: dict = Depends(current_user)) -> int:
+    return user["id"]
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -68,7 +72,7 @@ def list_users(page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=100)) 
 
 
 @app.post("/boards", response_model=schemas.BoardOut, status_code=201)
-def create_board(payload: schemas.BoardCreateRequest) -> dict:
+def create_board(payload: schemas.BoardCreateRequest, _: int = Depends(current_user_id)) -> dict:
     return services.create_board(payload.model_dump())
 
 
@@ -83,8 +87,8 @@ def get_board(board_id: int) -> dict:
 
 
 @app.post("/posts", response_model=schemas.PostOut, status_code=201)
-def create_post(payload: schemas.PostCreateRequest) -> dict:
-    return services.create_post(payload.model_dump())
+def create_post(payload: schemas.PostCreateRequest, user_id: int = Depends(current_user_id)) -> dict:
+    return services.create_post(payload.model_dump(), current_user_id=user_id)
 
 
 @app.get("/posts", response_model=schemas.PaginatedResponse)
@@ -103,18 +107,18 @@ def get_post(post_id: int) -> dict:
 
 
 @app.put("/posts/{post_id}", response_model=schemas.PostOut)
-def update_post(post_id: int, payload: schemas.PostUpdateRequest) -> dict:
-    return services.update_post(post_id, payload.model_dump(exclude_unset=True))
+def update_post(post_id: int, payload: schemas.PostUpdateRequest, user_id: int = Depends(current_user_id)) -> dict:
+    return services.update_post(post_id, payload.model_dump(exclude_unset=True), current_user_id=user_id)
 
 
 @app.delete("/posts/{post_id}", response_model=schemas.MessageResponse)
-def delete_post(post_id: int) -> dict:
-    return services.delete_post(post_id)
+def delete_post(post_id: int, user_id: int = Depends(current_user_id)) -> dict:
+    return services.delete_post(post_id, current_user_id=user_id)
 
 
 @app.post("/posts/{post_id}/replies", response_model=schemas.ReplyOut, status_code=201)
-def create_reply(post_id: int, payload: schemas.ReplyCreateRequest) -> dict:
-    return services.create_reply(post_id, payload.model_dump())
+def create_reply(post_id: int, payload: schemas.ReplyCreateRequest, user_id: int = Depends(current_user_id)) -> dict:
+    return services.create_reply(post_id, payload.model_dump(), current_user_id=user_id)
 
 
 @app.get("/posts/{post_id}/replies", response_model=schemas.PostRepliesViewResponse)
@@ -123,23 +127,23 @@ def list_replies(post_id: int, page: int = Query(1, ge=1), size: int = Query(10,
 
 
 @app.put("/replies/{reply_id}", response_model=schemas.ReplyOut)
-def update_reply(reply_id: int, payload: schemas.ReplyUpdateRequest) -> dict:
-    return services.update_reply(reply_id, payload.model_dump())
+def update_reply(reply_id: int, payload: schemas.ReplyUpdateRequest, user_id: int = Depends(current_user_id)) -> dict:
+    return services.update_reply(reply_id, payload.model_dump(), current_user_id=user_id)
 
 
 @app.delete("/replies/{reply_id}", response_model=schemas.MessageResponse)
-def delete_reply(reply_id: int) -> dict:
-    return services.delete_reply(reply_id)
+def delete_reply(reply_id: int, user_id: int = Depends(current_user_id)) -> dict:
+    return services.delete_reply(reply_id, current_user_id=user_id)
 
 
 @app.post("/favorites", status_code=201)
-def add_favorite(payload: schemas.FavoriteRequest) -> dict:
-    return services.add_favorite(payload.model_dump())
+def add_favorite(payload: schemas.FavoriteRequest, user_id: int = Depends(current_user_id)) -> dict:
+    return services.add_favorite(payload.model_dump(), current_user_id=user_id)
 
 
 @app.delete("/favorites", response_model=schemas.MessageResponse)
-def remove_favorite(user_id: int = Query(...), post_id: int = Query(...)) -> dict:
-    return services.remove_favorite(user_id=user_id, post_id=post_id)
+def remove_favorite(post_id: int = Query(...), user_id: int = Depends(current_user_id)) -> dict:
+    return services.remove_favorite(post_id=post_id, current_user_id=user_id)
 
 
 @app.get("/favorites", response_model=schemas.PaginatedResponse)

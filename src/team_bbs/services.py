@@ -176,18 +176,18 @@ def get_board(board_id: int) -> dict[str, Any]:
     return board
 
 
-def create_post(payload: dict[str, Any]) -> dict[str, Any]:
+def create_post(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         if _get_by_id(db["boards"], payload["board_id"]) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="board not found")
-        if _get_by_id(db["users"], payload["author_id"]) is None:
+        if _get_by_id(db["users"], current_user_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="author not found")
 
         now = now_iso()
         post = {
             "id": next_id(db, "post"),
             "board_id": payload["board_id"],
-            "author_id": payload["author_id"],
+            "author_id": current_user_id,
             "title": payload["title"],
             "content": payload["content"],
             "tags": payload.get("tags", []),
@@ -230,11 +230,13 @@ def get_post(post_id: int) -> dict[str, Any]:
     return post
 
 
-def update_post(post_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+def update_post(post_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         post = _get_by_id(db["posts"], post_id)
         if post is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+        if post["author_id"] != current_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
 
         if payload.get("title") is not None:
             post["title"] = payload["title"]
@@ -248,11 +250,13 @@ def update_post(post_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     return write_db(_mutate)
 
 
-def delete_post(post_id: int) -> dict[str, Any]:
+def delete_post(post_id: int, current_user_id: int) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         post = _get_by_id(db["posts"], post_id)
         if post is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+        if post["author_id"] != current_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
 
         db["posts"] = [item for item in db["posts"] if item["id"] != post_id]
         db["replies"] = [item for item in db["replies"] if item["post_id"] != post_id]
@@ -262,18 +266,18 @@ def delete_post(post_id: int) -> dict[str, Any]:
     return write_db(_mutate)
 
 
-def create_reply(post_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+def create_reply(post_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         if _get_by_id(db["posts"], post_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
-        if _get_by_id(db["users"], payload["author_id"]) is None:
+        if _get_by_id(db["users"], current_user_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="author not found")
 
         now = now_iso()
         reply = {
             "id": next_id(db, "reply"),
             "post_id": post_id,
-            "author_id": payload["author_id"],
+            "author_id": current_user_id,
             "content": payload["content"],
             "created_at": now,
             "updated_at": now,
@@ -297,11 +301,13 @@ def list_replies(post_id: int, page: int, size: int) -> dict[str, Any]:
     return result
 
 
-def update_reply(reply_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+def update_reply(reply_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         reply = _get_by_id(db["replies"], reply_id)
         if reply is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reply not found")
+        if reply["author_id"] != current_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
         reply["content"] = payload["content"]
         reply["updated_at"] = now_iso()
         return reply
@@ -309,31 +315,33 @@ def update_reply(reply_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     return write_db(_mutate)
 
 
-def delete_reply(reply_id: int) -> dict[str, Any]:
+def delete_reply(reply_id: int, current_user_id: int) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         reply = _get_by_id(db["replies"], reply_id)
         if reply is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reply not found")
+        if reply["author_id"] != current_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
         db["replies"] = [item for item in db["replies"] if item["id"] != reply_id]
         return {"message": "reply deleted"}
 
     return write_db(_mutate)
 
 
-def add_favorite(payload: dict[str, Any]) -> dict[str, Any]:
+def add_favorite(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        if _get_by_id(db["users"], payload["user_id"]) is None:
+        if _get_by_id(db["users"], current_user_id) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
         if _get_by_id(db["posts"], payload["post_id"]) is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
 
         for item in db["favorites"]:
-            if item["user_id"] == payload["user_id"] and item["post_id"] == payload["post_id"]:
+            if item["user_id"] == current_user_id and item["post_id"] == payload["post_id"]:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="favorite already exists")
 
         favorite = {
             "id": next_id(db, "favorite"),
-            "user_id": payload["user_id"],
+            "user_id": current_user_id,
             "post_id": payload["post_id"],
             "created_at": now_iso(),
         }
@@ -343,11 +351,13 @@ def add_favorite(payload: dict[str, Any]) -> dict[str, Any]:
     return write_db(_mutate)
 
 
-def remove_favorite(user_id: int, post_id: int) -> dict[str, Any]:
+def remove_favorite(post_id: int, current_user_id: int) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         before = len(db["favorites"])
         db["favorites"] = [
-            item for item in db["favorites"] if not (item["user_id"] == user_id and item["post_id"] == post_id)
+            item
+            for item in db["favorites"]
+            if not (item["user_id"] == current_user_id and item["post_id"] == post_id)
         ]
         if len(db["favorites"]) == before:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="favorite not found")
