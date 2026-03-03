@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, delete, func, or_, select
 
 from .db import SessionLocal
+from .default_behaviors import ensure_board_favorite, ensure_post_favorite
 from .models import Board, BoardFavorite, Favorite, Post, Reply, Token, User, now_utc
 
 
@@ -149,6 +150,10 @@ def create_board(payload: dict[str, Any]) -> dict[str, Any]:
         board = Board(name=payload["name"], description=payload.get("description", ""))
         db.add(board)
         db.flush()
+        # Default behavior: auto-favorite user's own board.
+        creator_id = payload.get("creator_id")
+        if creator_id is not None:
+            ensure_board_favorite(db, user_id=creator_id, board_id=board.id)
         db.refresh(board)
         return _board_out(board)
 
@@ -200,6 +205,8 @@ def create_post(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]
         )
         db.add(post)
         db.flush()
+        # Default behavior: auto-favorite user's own post.
+        ensure_post_favorite(db, user_id=current_user_id, post_id=post.id)
         db.refresh(post)
         return _post_out(post)
 
@@ -274,6 +281,8 @@ def create_reply(post_id: int, payload: dict[str, Any], current_user_id: int) ->
         reply = Reply(post_id=post_id, author_id=current_user_id, content=payload["content"], created_at=now, updated_at=now)
         db.add(reply)
         db.flush()
+        # Default behavior: replying a post auto-favorites that post for the replier.
+        ensure_post_favorite(db, user_id=current_user_id, post_id=post_id)
         db.refresh(reply)
         return _reply_out(reply)
 

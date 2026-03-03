@@ -72,8 +72,10 @@ def list_users(page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=100)) 
 
 
 @app.post("/boards", response_model=schemas.BoardOut, status_code=201)
-def create_board(payload: schemas.BoardCreateRequest, _: int = Depends(current_user_id)) -> dict:
-    return services.create_board(payload.model_dump())
+def create_board(payload: schemas.BoardCreateRequest, user_id: int = Depends(current_user_id)) -> dict:
+    data = payload.model_dump()
+    data["creator_id"] = user_id
+    return services.create_board(data)
 
 
 @app.get("/boards", response_model=list[schemas.BoardOut])

@@ -45,7 +45,7 @@ def test_level1_not_found_and_conflict_errors(client):
     )
     assert no_board_post.status_code == 404
 
-    remove_missing_fav = client.delete("/favorites", params={"post_id": post["id"]}, headers=auth_headers(token))
+    remove_missing_fav = client.delete("/favorites", params={"post_id": 99999}, headers=auth_headers(token))
     assert remove_missing_fav.status_code == 404
 
 

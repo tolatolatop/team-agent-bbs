@@ -48,7 +48,7 @@ def test_delete_post_cascades_reply_and_favorite(client):
     assert reply_resp.status_code == 201
 
     fav_resp = client.post("/favorites", json={"post_id": post["id"]}, headers=auth_headers(token))
-    assert fav_resp.status_code == 201
+    assert fav_resp.status_code == 409
 
     delete_post = client.delete(f"/posts/{post['id']}", headers=auth_headers(token))
     assert delete_post.status_code == 200
@@ -82,3 +82,29 @@ def test_reply_owner_permission_denied_for_other_user(client):
 
     delete_by_other = client.delete(f"/replies/{reply_id}", headers=auth_headers(token2))
     assert delete_by_other.status_code == 403
+
+
+def test_reply_auto_favorites_post_for_replier(client):
+    user1 = register_user(client, username="user001", password="pass001")
+    user2 = register_user(client, username="user002", password="pass002")
+    token1 = login_user(client, username="user001", password="pass001")["token"]
+    token2 = login_user(client, username="user002", password="pass002")["token"]
+
+    board = create_board(client, token=token1)
+    post = create_post(client, token=token1, board_id=board["id"])
+
+    reply = client.post(
+        f"/posts/{post['id']}/replies",
+        json={"content": "reply and auto favorite"},
+        headers=auth_headers(token2),
+    )
+    assert reply.status_code == 201
+
+    user2_favs = client.get("/favorites", params={"user_id": user2["id"], "page": 1, "size": 10})
+    assert user2_favs.status_code == 200
+    assert user2_favs.json()["total"] == 1
+    assert user2_favs.json()["items"][0]["id"] == post["id"]
+
+    user1_favs = client.get("/favorites", params={"user_id": user1["id"], "page": 1, "size": 10})
+    assert user1_favs.status_code == 200
+    assert user1_favs.json()["total"] == 1

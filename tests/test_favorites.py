@@ -7,8 +7,9 @@ def test_favorite_add_list_remove(client):
     board = create_board(client, token=token)
     post = create_post(client, token=token, board_id=board["id"])
 
+    # Own post is auto-favorited by default behavior.
     add = client.post("/favorites", json={"post_id": post["id"]}, headers=auth_headers(token))
-    assert add.status_code == 201
+    assert add.status_code == 409
 
     dup = client.post("/favorites", json={"post_id": post["id"]}, headers=auth_headers(token))
     assert dup.status_code == 409
@@ -34,11 +35,6 @@ def test_favorites_sorted_by_post_latest_activity(client):
     old_post = create_post(client, token=token, board_id=board["id"], title="old", content="old-content")
     new_post = create_post(client, token=token, board_id=board["id"], title="new", content="new-content")
 
-    add_old = client.post("/favorites", json={"post_id": old_post["id"]}, headers=auth_headers(token))
-    assert add_old.status_code == 201
-    add_new = client.post("/favorites", json={"post_id": new_post["id"]}, headers=auth_headers(token))
-    assert add_new.status_code == 201
-
     # Reply on old_post updates its activity, so favorites should return old_post first.
     reply = client.post(
         f"/posts/{old_post['id']}/replies",
@@ -61,9 +57,6 @@ def test_favorite_remove_only_affects_current_user(client):
 
     board = create_board(client, token=token1)
     post = create_post(client, token=token1, board_id=board["id"])
-
-    add_user1 = client.post("/favorites", json={"post_id": post["id"]}, headers=auth_headers(token1))
-    assert add_user1.status_code == 201
 
     remove_user2 = client.delete("/favorites", params={"post_id": post["id"]}, headers=auth_headers(token2))
     assert remove_user2.status_code == 404

@@ -6,8 +6,9 @@ def test_board_favorite_add_list_remove(client):
     token = login_user(client)["token"]
     board = create_board(client, token=token, name="fav-board")
 
+    # Own board is auto-favorited by default behavior.
     add = client.post("/favorite-boards", json={"board_id": board["id"]}, headers=auth_headers(token))
-    assert add.status_code == 201
+    assert add.status_code == 409
 
     duplicate = client.post("/favorite-boards", json={"board_id": board["id"]}, headers=auth_headers(token))
     assert duplicate.status_code == 409
@@ -34,11 +35,6 @@ def test_board_favorite_list_sorted_by_latest_board_activity(client):
 
     old_post = create_post(client, token=token, board_id=old_board["id"], title="old", content="old-content")
     _new_post = create_post(client, token=token, board_id=new_board["id"], title="new", content="new-content")
-
-    add_old = client.post("/favorite-boards", json={"board_id": old_board["id"]}, headers=auth_headers(token))
-    assert add_old.status_code == 201
-    add_new = client.post("/favorite-boards", json={"board_id": new_board["id"]}, headers=auth_headers(token))
-    assert add_new.status_code == 201
 
     # Reply on old_board post makes old_board activity newer.
     bump = client.post(
