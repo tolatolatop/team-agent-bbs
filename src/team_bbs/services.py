@@ -63,6 +63,17 @@ def _build_post_last_activity_map(db: dict[str, Any]) -> dict[int, str]:
     return activity_map
 
 
+def _build_board_last_activity_map(db: dict[str, Any], post_activity_map: dict[int, str]) -> dict[int, str]:
+    board_latest_activity: dict[int, str] = {}
+    for post in db["posts"]:
+        board_id = post["board_id"]
+        post_activity = post_activity_map[post["id"]]
+        current_latest = board_latest_activity.get(board_id)
+        if current_latest is None or post_activity > current_latest:
+            board_latest_activity[board_id] = post_activity
+    return board_latest_activity
+
+
 def register_user(payload: dict[str, Any]) -> dict[str, Any]:
     def _mutate(db: dict[str, Any]) -> dict[str, Any]:
         for user in db["users"]:
@@ -149,13 +160,7 @@ def list_boards() -> list[dict[str, Any]]:
     db = load_db()
     boards = list(db["boards"])
     post_activity_map = _build_post_last_activity_map(db)
-    board_latest_activity: dict[int, str] = {}
-    for post in db["posts"]:
-        board_id = post["board_id"]
-        post_activity = post_activity_map[post["id"]]
-        current_latest = board_latest_activity.get(board_id)
-        if current_latest is None or post_activity > current_latest:
-            board_latest_activity[board_id] = post_activity
+    board_latest_activity = _build_board_last_activity_map(db, post_activity_map)
 
     boards.sort(
         key=lambda board: (
@@ -380,3 +385,66 @@ def list_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
 
     favorite_posts.sort(key=lambda item: post_activity_map.get(item["id"], item["updated_at"]), reverse=True)
     return paginate(favorite_posts, page, size)
+
+
+def add_board_favorite(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
+    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
+        if _get_by_id(db["users"], current_user_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+        if _get_by_id(db["boards"], payload["board_id"]) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="board not found")
+
+        for item in db["board_favorites"]:
+            if item["user_id"] == current_user_id and item["board_id"] == payload["board_id"]:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="board favorite already exists")
+
+        board_favorite = {
+            "id": next_id(db, "board_favorite"),
+            "user_id": current_user_id,
+            "board_id": payload["board_id"],
+            "created_at": now_iso(),
+        }
+        db["board_favorites"].append(board_favorite)
+        return board_favorite
+
+    return write_db(_mutate)
+
+
+def remove_board_favorite(board_id: int, current_user_id: int) -> dict[str, Any]:
+    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
+        before = len(db["board_favorites"])
+        db["board_favorites"] = [
+            item
+            for item in db["board_favorites"]
+            if not (item["user_id"] == current_user_id and item["board_id"] == board_id)
+        ]
+        if len(db["board_favorites"]) == before:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="board favorite not found")
+        return {"message": "board favorite removed"}
+
+    return write_db(_mutate)
+
+
+def list_board_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
+    db = load_db()
+    if _get_by_id(db["users"], user_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+
+    post_activity_map = _build_post_last_activity_map(db)
+    board_latest_activity = _build_board_last_activity_map(db, post_activity_map)
+    board_map = {board["id"]: board for board in db["boards"]}
+
+    favorite_boards = []
+    for favorite in db["board_favorites"]:
+        if favorite["user_id"] == user_id and favorite["board_id"] in board_map:
+            favorite_boards.append(board_map[favorite["board_id"]])
+
+    favorite_boards.sort(
+        key=lambda board: (
+            board_latest_activity.get(board["id"]) is not None,
+            board_latest_activity.get(board["id"], ""),
+            board["created_at"],
+        ),
+        reverse=True,
+    )
+    return paginate(favorite_boards, page, size)

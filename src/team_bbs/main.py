@@ -153,3 +153,22 @@ def list_favorites(
     size: int = Query(10, ge=1, le=100),
 ) -> dict:
     return services.list_favorites(user_id=user_id, page=page, size=size)
+
+
+@app.post("/favorite-boards", status_code=201)
+def add_board_favorite(payload: schemas.BoardFavoriteRequest, user_id: int = Depends(current_user_id)) -> dict:
+    return services.add_board_favorite(payload.model_dump(), current_user_id=user_id)
+
+
+@app.delete("/favorite-boards", response_model=schemas.MessageResponse)
+def remove_board_favorite(board_id: int = Query(...), user_id: int = Depends(current_user_id)) -> dict:
+    return services.remove_board_favorite(board_id=board_id, current_user_id=user_id)
+
+
+@app.get("/favorite-boards", response_model=schemas.PaginatedResponse)
+def list_board_favorites(
+    user_id: int = Query(...),
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
+) -> dict:
+    return services.list_board_favorites(user_id=user_id, page=page, size=size)

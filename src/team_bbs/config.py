@@ -11,6 +11,7 @@ DEFAULT_DB = {
     "posts": [],
     "replies": [],
     "favorites": [],
+    "board_favorites": [],
     "tokens": [],
     "counters": {
         "user_id_seq": 0,
@@ -18,5 +19,6 @@ DEFAULT_DB = {
         "post_id_seq": 0,
         "reply_id_seq": 0,
         "favorite_id_seq": 0,
+        "board_favorite_id_seq": 0,
     },
 }

@@ -104,3 +104,7 @@ class PostRepliesViewResponse(BaseModel):
 
 class FavoriteRequest(BaseModel):
     post_id: int
+
+
+class BoardFavoriteRequest(BaseModel):
+    board_id: int
