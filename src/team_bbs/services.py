@@ -1,15 +1,18 @@
+import json
 import math
 import secrets
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, status
+from sqlalchemy import and_, delete, func, or_, select
 
-from .storage import load_db, next_id, write_db
+from .db import SessionLocal
+from .models import Board, BoardFavorite, Favorite, Post, Reply, Token, User, now_utc
 
 
-def now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+def _to_iso(dt: datetime) -> str:
+    return dt.isoformat()
 
 
 def paginate(items: list[dict[str, Any]], page: int, size: int) -> dict[str, Any]:
@@ -17,434 +20,413 @@ def paginate(items: list[dict[str, Any]], page: int, size: int) -> dict[str, Any
     total_pages = math.ceil(total / size) if total > 0 else 0
     start = (page - 1) * size
     end = start + size
+    return {"items": items[start:end], "page": page, "size": size, "total": total, "total_pages": total_pages}
+
+
+def _user_out(user: User) -> dict[str, Any]:
     return {
-        "items": items[start:end],
-        "page": page,
-        "size": size,
-        "total": total,
-        "total_pages": total_pages,
+        "id": user.id,
+        "username": user.username,
+        "nickname": user.nickname,
+        "bio": user.bio,
+        "created_at": _to_iso(user.created_at),
     }
 
 
-def _public_user(user: dict[str, Any]) -> dict[str, Any]:
+def _board_out(board: Board) -> dict[str, Any]:
+    return {"id": board.id, "name": board.name, "description": board.description, "created_at": _to_iso(board.created_at)}
+
+
+def _post_out(post: Post) -> dict[str, Any]:
     return {
-        "id": user["id"],
-        "username": user["username"],
-        "nickname": user.get("nickname", ""),
-        "bio": user.get("bio", ""),
-        "created_at": user["created_at"],
+        "id": post.id,
+        "board_id": post.board_id,
+        "author_id": post.author_id,
+        "title": post.title,
+        "content": post.content,
+        "tags": json.loads(post.tags or "[]"),
+        "created_at": _to_iso(post.created_at),
+        "updated_at": _to_iso(post.updated_at),
     }
 
 
-def _get_by_id(items: list[dict[str, Any]], item_id: int) -> dict[str, Any] | None:
-    for item in items:
-        if item["id"] == item_id:
-            return item
-    return None
+def _reply_out(reply: Reply) -> dict[str, Any]:
+    return {
+        "id": reply.id,
+        "post_id": reply.post_id,
+        "author_id": reply.author_id,
+        "content": reply.content,
+        "created_at": _to_iso(reply.created_at),
+        "updated_at": _to_iso(reply.updated_at),
+    }
 
 
-def _build_post_last_activity_map(db: dict[str, Any]) -> dict[int, str]:
-    latest_reply_map: dict[int, str] = {}
-    for reply in db["replies"]:
-        post_id = reply["post_id"]
-        reply_updated_at = reply["updated_at"]
-        current_latest = latest_reply_map.get(post_id)
-        if current_latest is None or reply_updated_at > current_latest:
-            latest_reply_map[post_id] = reply_updated_at
+def _build_post_last_activity_map(db, posts: list[Post]) -> dict[int, datetime]:
+    post_ids = [post.id for post in posts]
+    if not post_ids:
+        return {}
 
-    activity_map: dict[int, str] = {}
-    for post in db["posts"]:
-        post_updated_at = post["updated_at"]
-        latest_reply_at = latest_reply_map.get(post["id"])
-        if latest_reply_at is None or post_updated_at >= latest_reply_at:
-            activity_map[post["id"]] = post_updated_at
-        else:
-            activity_map[post["id"]] = latest_reply_at
+    reply_rows = db.execute(
+        select(Reply.post_id, func.max(Reply.updated_at)).where(Reply.post_id.in_(post_ids)).group_by(Reply.post_id)
+    ).all()
+    reply_max_map = {post_id: max_updated for post_id, max_updated in reply_rows}
+
+    activity_map: dict[int, datetime] = {}
+    for post in posts:
+        reply_time = reply_max_map.get(post.id)
+        activity_map[post.id] = max(post.updated_at, reply_time) if reply_time else post.updated_at
     return activity_map
 
 
-def _build_board_last_activity_map(db: dict[str, Any], post_activity_map: dict[int, str]) -> dict[int, str]:
-    board_latest_activity: dict[int, str] = {}
-    for post in db["posts"]:
-        board_id = post["board_id"]
-        post_activity = post_activity_map[post["id"]]
-        current_latest = board_latest_activity.get(board_id)
-        if current_latest is None or post_activity > current_latest:
-            board_latest_activity[board_id] = post_activity
-    return board_latest_activity
+def _build_board_last_activity_map(posts: list[Post], post_activity_map: dict[int, datetime]) -> dict[int, datetime]:
+    board_map: dict[int, datetime] = {}
+    for post in posts:
+        activity = post_activity_map[post.id]
+        current = board_map.get(post.board_id)
+        board_map[post.board_id] = activity if current is None or activity > current else current
+    return board_map
 
 
 def register_user(payload: dict[str, Any]) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        for user in db["users"]:
-            if user["username"] == payload["username"]:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username already exists")
+    with SessionLocal.begin() as db:
+        exists = db.execute(select(User).where(User.username == payload["username"])).scalar_one_or_none()
+        if exists:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username already exists")
 
-        user = {
-            "id": next_id(db, "user"),
-            "username": payload["username"],
-            "password": payload["password"],
-            "nickname": payload["nickname"],
-            "bio": payload.get("bio", ""),
-            "created_at": now_iso(),
-        }
-        db["users"].append(user)
-        return _public_user(user)
-
-    return write_db(_mutate)
+        user = User(
+            username=payload["username"],
+            password=payload["password"],
+            nickname=payload["nickname"],
+            bio=payload.get("bio", ""),
+        )
+        db.add(user)
+        db.flush()
+        db.refresh(user)
+        return _user_out(user)
 
 
 def login(payload: dict[str, Any]) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        matched_user = None
-        for user in db["users"]:
-            if user["username"] == payload["username"] and user["password"] == payload["password"]:
-                matched_user = user
-                break
-        if matched_user is None:
+    with SessionLocal.begin() as db:
+        user = db.execute(
+            select(User).where(and_(User.username == payload["username"], User.password == payload["password"]))
+        ).scalar_one_or_none()
+        if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid username or password")
 
-        token = secrets.token_hex(16)
-        db["tokens"].append({"token": token, "user_id": matched_user["id"], "created_at": now_iso()})
-        return {"token": token, "user": _public_user(matched_user)}
-
-    return write_db(_mutate)
+        token_value = secrets.token_hex(16)
+        token = Token(token=token_value, user_id=user.id)
+        db.add(token)
+        return {"token": token_value, "user": _user_out(user)}
 
 
 def get_me_by_token(token: str) -> dict[str, Any]:
-    db = load_db()
-    user_id = None
-    for row in db["tokens"]:
-        if row["token"] == token:
-            user_id = row["user_id"]
-            break
-    if user_id is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
-
-    user = _get_by_id(db["users"], user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token user not found")
-    return _public_user(user)
+    with SessionLocal() as db:
+        token_row = db.execute(select(Token).where(Token.token == token)).scalar_one_or_none()
+        if token_row is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
+        user = db.execute(select(User).where(User.id == token_row.user_id)).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token user not found")
+        return _user_out(user)
 
 
 def get_user(user_id: int) -> dict[str, Any]:
-    db = load_db()
-    user = _get_by_id(db["users"], user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-    return _public_user(user)
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+        return _user_out(user)
 
 
 def list_users(page: int, size: int) -> dict[str, Any]:
-    db = load_db()
-    users = [_public_user(user) for user in db["users"]]
-    users.sort(key=lambda item: item["created_at"], reverse=True)
-    return paginate(users, page, size)
+    with SessionLocal() as db:
+        users = db.execute(select(User).order_by(User.created_at.desc())).scalars().all()
+        return paginate([_user_out(user) for user in users], page, size)
 
 
 def create_board(payload: dict[str, Any]) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        board = {
-            "id": next_id(db, "board"),
-            "name": payload["name"],
-            "description": payload.get("description", ""),
-            "created_at": now_iso(),
-        }
-        db["boards"].append(board)
-        return board
-
-    return write_db(_mutate)
+    with SessionLocal.begin() as db:
+        board = Board(name=payload["name"], description=payload.get("description", ""))
+        db.add(board)
+        db.flush()
+        db.refresh(board)
+        return _board_out(board)
 
 
 def list_boards() -> list[dict[str, Any]]:
-    db = load_db()
-    boards = list(db["boards"])
-    post_activity_map = _build_post_last_activity_map(db)
-    board_latest_activity = _build_board_last_activity_map(db, post_activity_map)
+    with SessionLocal() as db:
+        boards = db.execute(select(Board)).scalars().all()
+        posts = db.execute(select(Post)).scalars().all()
+        post_activity_map = _build_post_last_activity_map(db, posts)
+        board_activity_map = _build_board_last_activity_map(posts, post_activity_map)
 
-    boards.sort(
-        key=lambda board: (
-            board_latest_activity.get(board["id"]) is not None,
-            board_latest_activity.get(board["id"], ""),
-            board["created_at"],
-        ),
-        reverse=True,
-    )
-    return boards
+        boards.sort(
+            key=lambda board: (
+                board_activity_map.get(board.id) is not None,
+                board_activity_map.get(board.id, now_utc().replace(year=1970)),
+                board.created_at,
+            ),
+            reverse=True,
+        )
+        return [_board_out(board) for board in boards]
 
 
 def get_board(board_id: int) -> dict[str, Any]:
-    db = load_db()
-    board = _get_by_id(db["boards"], board_id)
-    if board is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="board not found")
-    return board
+    with SessionLocal() as db:
+        board = db.execute(select(Board).where(Board.id == board_id)).scalar_one_or_none()
+        if board is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="board not found")
+        return _board_out(board)
 
 
 def create_post(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        if _get_by_id(db["boards"], payload["board_id"]) is None:
+    with SessionLocal.begin() as db:
+        board = db.execute(select(Board).where(Board.id == payload["board_id"])).scalar_one_or_none()
+        if board is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="board not found")
-        if _get_by_id(db["users"], current_user_id) is None:
+        author = db.execute(select(User).where(User.id == current_user_id)).scalar_one_or_none()
+        if author is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="author not found")
 
-        now = now_iso()
-        post = {
-            "id": next_id(db, "post"),
-            "board_id": payload["board_id"],
-            "author_id": current_user_id,
-            "title": payload["title"],
-            "content": payload["content"],
-            "tags": payload.get("tags", []),
-            "created_at": now,
-            "updated_at": now,
-        }
-        db["posts"].append(post)
-        return post
-
-    return write_db(_mutate)
+        now = now_utc()
+        post = Post(
+            board_id=payload["board_id"],
+            author_id=current_user_id,
+            title=payload["title"],
+            content=payload["content"],
+            tags=json.dumps(payload.get("tags", [])),
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(post)
+        db.flush()
+        db.refresh(post)
+        return _post_out(post)
 
 
 def list_posts(page: int, size: int, board_id: int | None = None, keyword: str | None = None) -> dict[str, Any]:
-    db = load_db()
-    posts = list(db["posts"])
-    post_activity_map = _build_post_last_activity_map(db)
+    with SessionLocal() as db:
+        stmt = select(Post)
+        if board_id is not None:
+            stmt = stmt.where(Post.board_id == board_id)
+        if keyword:
+            query = f"%{keyword.lower()}%"
+            stmt = stmt.where(or_(func.lower(Post.title).like(query), func.lower(Post.content).like(query), func.lower(Post.tags).like(query)))
 
-    if board_id is not None:
-        posts = [post for post in posts if post["board_id"] == board_id]
-
-    if keyword:
-        query = keyword.lower()
-        posts = [
-            post
-            for post in posts
-            if query in post["title"].lower()
-            or query in post["content"].lower()
-            or any(query in tag.lower() for tag in post.get("tags", []))
-        ]
-
-    posts.sort(key=lambda item: post_activity_map.get(item["id"], item["updated_at"]), reverse=True)
-    return paginate(posts, page, size)
+        posts = db.execute(stmt).scalars().all()
+        activity_map = _build_post_last_activity_map(db, posts)
+        posts.sort(key=lambda post: activity_map.get(post.id, post.updated_at), reverse=True)
+        return paginate([_post_out(post) for post in posts], page, size)
 
 
 def get_post(post_id: int) -> dict[str, Any]:
-    db = load_db()
-    post = _get_by_id(db["posts"], post_id)
-    if post is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
-    return post
+    with SessionLocal() as db:
+        post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        if post is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+        return _post_out(post)
 
 
 def update_post(post_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        post = _get_by_id(db["posts"], post_id)
+    with SessionLocal.begin() as db:
+        post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
         if post is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
-        if post["author_id"] != current_user_id:
+        if post.author_id != current_user_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
 
         if payload.get("title") is not None:
-            post["title"] = payload["title"]
+            post.title = payload["title"]
         if payload.get("content") is not None:
-            post["content"] = payload["content"]
+            post.content = payload["content"]
         if payload.get("tags") is not None:
-            post["tags"] = payload["tags"]
-        post["updated_at"] = now_iso()
-        return post
-
-    return write_db(_mutate)
+            post.tags = json.dumps(payload["tags"])
+        post.updated_at = now_utc()
+        db.flush()
+        db.refresh(post)
+        return _post_out(post)
 
 
 def delete_post(post_id: int, current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        post = _get_by_id(db["posts"], post_id)
+    with SessionLocal.begin() as db:
+        post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
         if post is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
-        if post["author_id"] != current_user_id:
+        if post.author_id != current_user_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
 
-        db["posts"] = [item for item in db["posts"] if item["id"] != post_id]
-        db["replies"] = [item for item in db["replies"] if item["post_id"] != post_id]
-        db["favorites"] = [item for item in db["favorites"] if item["post_id"] != post_id]
+        db.execute(delete(Reply).where(Reply.post_id == post_id))
+        db.execute(delete(Favorite).where(Favorite.post_id == post_id))
+        db.execute(delete(Post).where(Post.id == post_id))
         return {"message": "post deleted"}
-
-    return write_db(_mutate)
 
 
 def create_reply(post_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        if _get_by_id(db["posts"], post_id) is None:
+    with SessionLocal.begin() as db:
+        post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        if post is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
-        if _get_by_id(db["users"], current_user_id) is None:
+        author = db.execute(select(User).where(User.id == current_user_id)).scalar_one_or_none()
+        if author is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="author not found")
 
-        now = now_iso()
-        reply = {
-            "id": next_id(db, "reply"),
-            "post_id": post_id,
-            "author_id": current_user_id,
-            "content": payload["content"],
-            "created_at": now,
-            "updated_at": now,
-        }
-        db["replies"].append(reply)
-        return reply
-
-    return write_db(_mutate)
+        now = now_utc()
+        reply = Reply(post_id=post_id, author_id=current_user_id, content=payload["content"], created_at=now, updated_at=now)
+        db.add(reply)
+        db.flush()
+        db.refresh(reply)
+        return _reply_out(reply)
 
 
 def list_replies(post_id: int, page: int, size: int) -> dict[str, Any]:
-    db = load_db()
-    post = _get_by_id(db["posts"], post_id)
-    if post is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+    with SessionLocal() as db:
+        post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        if post is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
 
-    replies = [item for item in db["replies"] if item["post_id"] == post_id]
-    replies.sort(key=lambda item: item["updated_at"], reverse=True)
-    result = paginate(replies, page, size)
-    result["post"] = post
-    return result
+        replies = db.execute(select(Reply).where(Reply.post_id == post_id)).scalars().all()
+        replies.sort(key=lambda reply: reply.updated_at, reverse=True)
+        result = paginate([_reply_out(reply) for reply in replies], page, size)
+        result["post"] = _post_out(post)
+        return result
 
 
 def update_reply(reply_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        reply = _get_by_id(db["replies"], reply_id)
+    with SessionLocal.begin() as db:
+        reply = db.execute(select(Reply).where(Reply.id == reply_id)).scalar_one_or_none()
         if reply is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reply not found")
-        if reply["author_id"] != current_user_id:
+        if reply.author_id != current_user_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
-        reply["content"] = payload["content"]
-        reply["updated_at"] = now_iso()
-        return reply
-
-    return write_db(_mutate)
+        reply.content = payload["content"]
+        reply.updated_at = now_utc()
+        db.flush()
+        db.refresh(reply)
+        return _reply_out(reply)
 
 
 def delete_reply(reply_id: int, current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        reply = _get_by_id(db["replies"], reply_id)
+    with SessionLocal.begin() as db:
+        reply = db.execute(select(Reply).where(Reply.id == reply_id)).scalar_one_or_none()
         if reply is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="reply not found")
-        if reply["author_id"] != current_user_id:
+        if reply.author_id != current_user_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
-        db["replies"] = [item for item in db["replies"] if item["id"] != reply_id]
+        db.execute(delete(Reply).where(Reply.id == reply_id))
         return {"message": "reply deleted"}
-
-    return write_db(_mutate)
 
 
 def add_favorite(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        if _get_by_id(db["users"], current_user_id) is None:
+    with SessionLocal.begin() as db:
+        user = db.execute(select(User).where(User.id == current_user_id)).scalar_one_or_none()
+        if user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-        if _get_by_id(db["posts"], payload["post_id"]) is None:
+        post = db.execute(select(Post).where(Post.id == payload["post_id"])).scalar_one_or_none()
+        if post is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
 
-        for item in db["favorites"]:
-            if item["user_id"] == current_user_id and item["post_id"] == payload["post_id"]:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="favorite already exists")
+        exists = db.execute(
+            select(Favorite).where(and_(Favorite.user_id == current_user_id, Favorite.post_id == payload["post_id"]))
+        ).scalar_one_or_none()
+        if exists:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="favorite already exists")
 
-        favorite = {
-            "id": next_id(db, "favorite"),
-            "user_id": current_user_id,
-            "post_id": payload["post_id"],
-            "created_at": now_iso(),
-        }
-        db["favorites"].append(favorite)
-        return favorite
-
-    return write_db(_mutate)
+        favorite = Favorite(user_id=current_user_id, post_id=payload["post_id"])
+        db.add(favorite)
+        db.flush()
+        db.refresh(favorite)
+        return {"id": favorite.id, "user_id": favorite.user_id, "post_id": favorite.post_id, "created_at": _to_iso(favorite.created_at)}
 
 
 def remove_favorite(post_id: int, current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        before = len(db["favorites"])
-        db["favorites"] = [
-            item
-            for item in db["favorites"]
-            if not (item["user_id"] == current_user_id and item["post_id"] == post_id)
-        ]
-        if len(db["favorites"]) == before:
+    with SessionLocal.begin() as db:
+        favorite = db.execute(
+            select(Favorite).where(and_(Favorite.user_id == current_user_id, Favorite.post_id == post_id))
+        ).scalar_one_or_none()
+        if favorite is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="favorite not found")
+        db.execute(delete(Favorite).where(Favorite.id == favorite.id))
         return {"message": "favorite removed"}
-
-    return write_db(_mutate)
 
 
 def list_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
-    db = load_db()
-    if _get_by_id(db["users"], user_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-    post_activity_map = _build_post_last_activity_map(db)
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
 
-    post_map = {post["id"]: post for post in db["posts"]}
-    favorite_posts = []
-    for favorite in db["favorites"]:
-        if favorite["user_id"] == user_id and favorite["post_id"] in post_map:
-            favorite_posts.append(post_map[favorite["post_id"]])
-
-    favorite_posts.sort(key=lambda item: post_activity_map.get(item["id"], item["updated_at"]), reverse=True)
-    return paginate(favorite_posts, page, size)
+        favorite_rows = db.execute(select(Favorite).where(Favorite.user_id == user_id)).scalars().all()
+        post_ids = [fav.post_id for fav in favorite_rows]
+        posts = db.execute(select(Post).where(Post.id.in_(post_ids))).scalars().all() if post_ids else []
+        post_map = {post.id: post for post in posts}
+        activity_map = _build_post_last_activity_map(db, posts)
+        posts = [post_map[fav.post_id] for fav in favorite_rows if fav.post_id in post_map]
+        posts.sort(key=lambda post: activity_map.get(post.id, post.updated_at), reverse=True)
+        return paginate([_post_out(post) for post in posts], page, size)
 
 
 def add_board_favorite(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        if _get_by_id(db["users"], current_user_id) is None:
+    with SessionLocal.begin() as db:
+        user = db.execute(select(User).where(User.id == current_user_id)).scalar_one_or_none()
+        if user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
-        if _get_by_id(db["boards"], payload["board_id"]) is None:
+        board = db.execute(select(Board).where(Board.id == payload["board_id"])).scalar_one_or_none()
+        if board is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="board not found")
 
-        for item in db["board_favorites"]:
-            if item["user_id"] == current_user_id and item["board_id"] == payload["board_id"]:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="board favorite already exists")
+        exists = db.execute(
+            select(BoardFavorite).where(
+                and_(BoardFavorite.user_id == current_user_id, BoardFavorite.board_id == payload["board_id"])
+            )
+        ).scalar_one_or_none()
+        if exists:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="board favorite already exists")
 
-        board_favorite = {
-            "id": next_id(db, "board_favorite"),
-            "user_id": current_user_id,
-            "board_id": payload["board_id"],
-            "created_at": now_iso(),
+        board_favorite = BoardFavorite(user_id=current_user_id, board_id=payload["board_id"])
+        db.add(board_favorite)
+        db.flush()
+        db.refresh(board_favorite)
+        return {
+            "id": board_favorite.id,
+            "user_id": board_favorite.user_id,
+            "board_id": board_favorite.board_id,
+            "created_at": _to_iso(board_favorite.created_at),
         }
-        db["board_favorites"].append(board_favorite)
-        return board_favorite
-
-    return write_db(_mutate)
 
 
 def remove_board_favorite(board_id: int, current_user_id: int) -> dict[str, Any]:
-    def _mutate(db: dict[str, Any]) -> dict[str, Any]:
-        before = len(db["board_favorites"])
-        db["board_favorites"] = [
-            item
-            for item in db["board_favorites"]
-            if not (item["user_id"] == current_user_id and item["board_id"] == board_id)
-        ]
-        if len(db["board_favorites"]) == before:
+    with SessionLocal.begin() as db:
+        row = db.execute(
+            select(BoardFavorite).where(and_(BoardFavorite.user_id == current_user_id, BoardFavorite.board_id == board_id))
+        ).scalar_one_or_none()
+        if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="board favorite not found")
+        db.execute(delete(BoardFavorite).where(BoardFavorite.id == row.id))
         return {"message": "board favorite removed"}
-
-    return write_db(_mutate)
 
 
 def list_board_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
-    db = load_db()
-    if _get_by_id(db["users"], user_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    with SessionLocal() as db:
+        user = db.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
 
-    post_activity_map = _build_post_last_activity_map(db)
-    board_latest_activity = _build_board_last_activity_map(db, post_activity_map)
-    board_map = {board["id"]: board for board in db["boards"]}
+        favorite_rows = db.execute(select(BoardFavorite).where(BoardFavorite.user_id == user_id)).scalars().all()
+        board_ids = [fav.board_id for fav in favorite_rows]
+        boards = db.execute(select(Board).where(Board.id.in_(board_ids))).scalars().all() if board_ids else []
+        board_map = {board.id: board for board in boards}
 
-    favorite_boards = []
-    for favorite in db["board_favorites"]:
-        if favorite["user_id"] == user_id and favorite["board_id"] in board_map:
-            favorite_boards.append(board_map[favorite["board_id"]])
+        posts = db.execute(select(Post).where(Post.board_id.in_(board_ids))).scalars().all() if board_ids else []
+        post_activity_map = _build_post_last_activity_map(db, posts)
+        board_activity_map = _build_board_last_activity_map(posts, post_activity_map)
 
-    favorite_boards.sort(
-        key=lambda board: (
-            board_latest_activity.get(board["id"]) is not None,
-            board_latest_activity.get(board["id"], ""),
-            board["created_at"],
-        ),
-        reverse=True,
-    )
-    return paginate(favorite_boards, page, size)
+        boards = [board_map[fav.board_id] for fav in favorite_rows if fav.board_id in board_map]
+        boards.sort(
+            key=lambda board: (
+                board_activity_map.get(board.id) is not None,
+                board_activity_map.get(board.id, now_utc().replace(year=1970)),
+                board.created_at,
+            ),
+            reverse=True,
+        )
+        return paginate([_board_out(board) for board in boards], page, size)

@@ -36,6 +36,7 @@ htmlcov/
 
 # Local runtime database
 data/db.json
+data/*.db
 
 # Local environment file
 .env

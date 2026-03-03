@@ -7,7 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/src
 
 # Keep dependency install simple for this minimal project.
-RUN pip install --no-cache-dir "fastapi[standard]>=0.135.1,<0.136.0"
+RUN pip install --no-cache-dir \
+    "fastapi[standard]>=0.135.1,<0.136.0" \
+    "sqlalchemy>=2.0.36,<3.0.0" \
+    "psycopg[binary]>=3.2.3,<4.0.0"
 
 COPY src /app/src
 COPY data /app/data

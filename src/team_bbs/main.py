@@ -4,7 +4,7 @@ from fastapi import Depends, FastAPI, Header, Query
 from fastapi.exceptions import HTTPException
 
 from . import schemas, services
-from .storage import ensure_db_file
+from .db import init_db
 
 
 HOST = os.getenv("HOST", "127.0.0.1")
@@ -20,7 +20,7 @@ app = FastAPI(
     version="0.1.0",
     servers=[{"url": SERVER_URL}],
 )
-ensure_db_file()
+init_db()
 
 
 def parse_bearer_token(authorization: str | None) -> str:

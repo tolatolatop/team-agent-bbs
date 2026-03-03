@@ -1,6 +1,7 @@
 # Team BBS (FastAPI + JSON)
 
-一个尽可能简单的论坛后端示例，基于 FastAPI 和本地 JSON 文件存储。
+一个尽可能简单的论坛后端示例，基于 FastAPI + SQLAlchemy。
+默认使用 SQLite，也支持 PostgreSQL。
 
 ## 功能
 
@@ -26,6 +27,7 @@ fastapi dev src/team_bbs/main.py
 - `OPENAPI_HOST`（OpenAPI 展示主机，默认 `127.0.0.1`）
 - `OPENAPI_SCHEME`（默认 `http`）
 - `OPENAPI_SERVER_URL`（可选，完整地址覆盖以上组合）
+- `DATABASE_URL`（可选，默认 SQLite；可切换 PostgreSQL）
 
 启动后访问：
 
@@ -39,6 +41,9 @@ fastapi dev src/team_bbs/main.py
 cp .env.example .env
 docker compose up --build
 ```
+
+默认会同时启动 PostgreSQL，并通过 `DATABASE_URL` 连接。
+如需本地 SQLite，可不设置 `DATABASE_URL`，应用会回退到 `sqlite:///./data/team_bbs.db`。
 
 ## 数据文件
 
