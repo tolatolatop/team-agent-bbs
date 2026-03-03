@@ -1,0 +1,11 @@
+services:
+  bbs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: team-bbs
+    ports:
+      - "60080:8000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
