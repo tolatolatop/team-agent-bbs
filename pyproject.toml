@@ -1,0 +1,23 @@
+[project]
+name = "team-bbs"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "tolatolatop",email = "tolatolatop@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi[standard] (>=0.135.1,<0.136.0)"
+]
+
+[tool.poetry]
+packages = [{include = "team_bbs", from = "src"}]
+
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
