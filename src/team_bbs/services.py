@@ -666,15 +666,15 @@ def mark_all_notifications_read(current_user_id: int) -> dict[str, Any]:
         return {"message": "all notifications marked as read"}
 
 
-def list_usernames_with_unread_notifications() -> list[str]:
+def list_unread_notification_targets() -> list[tuple[str, int]]:
     with SessionLocal() as db:
         rows = db.execute(
-            select(User.username)
+            select(User.username, func.count(Notification.id))
             .join(Notification, Notification.user_id == User.id)
             .where(Notification.is_read.is_(False))
             .group_by(User.id, User.username)
         ).all()
-        return [username for username, in rows]
+        return [(username, int(unread_count)) for username, unread_count in rows]
 
 
 def simple_search(keyword: str) -> dict[str, Any]:

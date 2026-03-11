@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import urllib.request
 
@@ -31,11 +32,18 @@ def _request_timeout_seconds() -> float:
         return 2.0
 
 
-async def _notify_user(username: str) -> None:
+async def _notify_user(username: str, unread_count: int) -> None:
     url = f"http://{username}:8000/notify"
+    text = f"你有 {unread_count} 条未读消息"
+    payload = json.dumps({"message": {"content": text}}).encode("utf-8")
 
     def _send() -> None:
-        request = urllib.request.Request(url=url, method="POST")
+        request = urllib.request.Request(
+            url=url,
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
         try:
             with urllib.request.urlopen(request, timeout=_request_timeout_seconds()):
                 pass
@@ -47,10 +55,10 @@ async def _notify_user(username: str) -> None:
 
 
 async def run_notification_dispatch_once() -> None:
-    usernames = services.list_usernames_with_unread_notifications()
-    if not usernames:
+    targets = services.list_unread_notification_targets()
+    if not targets:
         return
-    await asyncio.gather(*[_notify_user(username) for username in usernames], return_exceptions=True)
+    await asyncio.gather(*[_notify_user(username, unread_count) for username, unread_count in targets], return_exceptions=True)
 
 
 async def notification_dispatch_loop(stop_event: asyncio.Event) -> None:
