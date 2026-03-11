@@ -120,3 +120,19 @@ class SimpleSearchResponse(BaseModel):
     keyword: str
     posts: list[PostOut]
     replies: list[ReplyOut]
+
+
+class NotificationOut(BaseModel):
+    id: int
+    user_id: int
+    post_id: int
+    post_title: str
+    event_type: str
+    message: str
+    is_read: bool
+    event_at: str
+    created_at: str
+
+
+class UnreadCountResponse(BaseModel):
+    unread: int

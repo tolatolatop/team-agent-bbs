@@ -1,7 +1,7 @@
 import json
 import math
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -9,7 +9,7 @@ from sqlalchemy import and_, delete, func, or_, select
 
 from .db import SessionLocal
 from .default_behaviors import ensure_board_favorite, ensure_post_favorite
-from .models import Board, BoardFavorite, Favorite, Post, Reply, Token, User, now_utc
+from .models import Board, BoardFavorite, Favorite, Notification, Post, Reply, Token, User, now_utc
 
 
 def _to_iso(dt: datetime) -> str:
@@ -96,6 +96,28 @@ def _reply_out(
         "content": reply.content,
         "created_at": _to_iso(reply.created_at),
         "updated_at": _to_iso(reply.updated_at),
+    }
+
+
+def _notification_message(event_type: str) -> str:
+    if event_type == "post_updated":
+        return "你关注的帖子有更新"
+    if event_type == "new_reply":
+        return "你关注的帖子有新回复"
+    return "你关注的帖子有新动态"
+
+
+def _notification_out(notification: Notification, post_title: str = "") -> dict[str, Any]:
+    return {
+        "id": notification.id,
+        "user_id": notification.user_id,
+        "post_id": notification.post_id,
+        "post_title": post_title,
+        "event_type": notification.event_type,
+        "message": notification.message,
+        "is_read": notification.is_read,
+        "event_at": _to_iso(notification.event_at),
+        "created_at": _to_iso(notification.created_at),
     }
 
 
@@ -297,6 +319,43 @@ def get_post(post_id: int) -> dict[str, Any]:
         )
 
 
+def notify_post_followers(db, post: Post, actor_user_id: int, event_type: str, event_at: datetime) -> None:
+    follower_rows = db.execute(select(Favorite.user_id).where(Favorite.post_id == post.id)).all()
+    follower_ids = {user_id for user_id, in follower_rows if user_id != actor_user_id}
+    if not follower_ids:
+        return
+
+    dedupe_window_start = event_at - timedelta(minutes=5)
+    for follower_id in follower_ids:
+        existing = db.execute(
+            select(Notification)
+            .where(
+                and_(
+                    Notification.user_id == follower_id,
+                    Notification.post_id == post.id,
+                    Notification.event_type == event_type,
+                    Notification.is_read.is_(False),
+                    Notification.created_at >= dedupe_window_start,
+                )
+            )
+            .order_by(Notification.created_at.desc())
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.event_at = event_at
+            existing.message = _notification_message(event_type)
+            continue
+        db.add(
+            Notification(
+                user_id=follower_id,
+                post_id=post.id,
+                event_type=event_type,
+                message=_notification_message(event_type),
+                is_read=False,
+                event_at=event_at,
+            )
+        )
+
+
 def update_post(post_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
     with SessionLocal.begin() as db:
         post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
@@ -312,6 +371,7 @@ def update_post(post_id: int, payload: dict[str, Any], current_user_id: int) -> 
         if payload.get("tags") is not None:
             post.tags = json.dumps(payload["tags"])
         post.updated_at = now_utc()
+        notify_post_followers(db, post=post, actor_user_id=current_user_id, event_type="post_updated", event_at=post.updated_at)
         db.flush()
         db.refresh(post)
         board_name_map = _build_board_name_map(db, {post.board_id})
@@ -354,6 +414,7 @@ def create_reply(post_id: int, payload: dict[str, Any], current_user_id: int) ->
         db.flush()
         # Default behavior: replying a post auto-favorites that post for the replier.
         ensure_post_favorite(db, user_id=current_user_id, post_id=post_id)
+        notify_post_followers(db, post=post, actor_user_id=current_user_id, event_type="new_reply", event_at=now)
         db.refresh(reply)
         return _reply_out(
             reply,
@@ -555,6 +616,54 @@ def list_board_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
             reverse=True,
         )
         return paginate([_board_out(board) for board in boards], page, size)
+
+
+def list_notifications(current_user_id: int, page: int, size: int) -> dict[str, Any]:
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(Notification)
+            .where(Notification.user_id == current_user_id)
+            .order_by(Notification.created_at.desc())
+        ).scalars().all()
+        post_title_map = _build_post_title_map(db, {row.post_id for row in rows})
+        items = [_notification_out(row, post_title=post_title_map.get(row.post_id, "")) for row in rows]
+        return paginate(items, page, size)
+
+
+def get_unread_notification_count(current_user_id: int) -> dict[str, Any]:
+    with SessionLocal() as db:
+        unread = db.execute(
+            select(func.count(Notification.id)).where(
+                and_(Notification.user_id == current_user_id, Notification.is_read.is_(False))
+            )
+        ).scalar_one()
+        return {"unread": unread}
+
+
+def mark_notification_read(notification_id: int, current_user_id: int) -> dict[str, Any]:
+    with SessionLocal.begin() as db:
+        row = db.execute(select(Notification).where(Notification.id == notification_id)).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="notification not found")
+        if row.user_id != current_user_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="forbidden")
+        row.is_read = True
+        db.flush()
+        db.refresh(row)
+        post_title_map = _build_post_title_map(db, {row.post_id})
+        return _notification_out(row, post_title=post_title_map.get(row.post_id, ""))
+
+
+def mark_all_notifications_read(current_user_id: int) -> dict[str, Any]:
+    with SessionLocal.begin() as db:
+        rows = db.execute(
+            select(Notification).where(
+                and_(Notification.user_id == current_user_id, Notification.is_read.is_(False))
+            )
+        ).scalars().all()
+        for row in rows:
+            row.is_read = True
+        return {"message": "all notifications marked as read"}
 
 
 def simple_search(keyword: str) -> dict[str, Any]:

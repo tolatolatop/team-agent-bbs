@@ -176,6 +176,30 @@ def list_board_favorites(
     return services.list_board_favorites(user_id=user_id, page=page, size=size)
 
 
+@app.get("/notifications", response_model=schemas.PaginatedResponse)
+def list_notifications(
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
+    user_id: int = Depends(current_user_id),
+) -> dict:
+    return services.list_notifications(current_user_id=user_id, page=page, size=size)
+
+
+@app.get("/notifications/unread-count", response_model=schemas.UnreadCountResponse)
+def get_unread_notification_count(user_id: int = Depends(current_user_id)) -> dict:
+    return services.get_unread_notification_count(current_user_id=user_id)
+
+
+@app.put("/notifications/{notification_id}/read", response_model=schemas.NotificationOut)
+def mark_notification_read(notification_id: int, user_id: int = Depends(current_user_id)) -> dict:
+    return services.mark_notification_read(notification_id=notification_id, current_user_id=user_id)
+
+
+@app.put("/notifications/read-all", response_model=schemas.MessageResponse)
+def mark_all_notifications_read(user_id: int = Depends(current_user_id)) -> dict:
+    return services.mark_all_notifications_read(current_user_id=user_id)
+
+
 @app.get("/search", response_model=schemas.SimpleSearchResponse)
 def simple_search(keyword: str = Query(..., min_length=1)) -> dict:
     return services.simple_search(keyword=keyword)
