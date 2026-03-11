@@ -2,6 +2,7 @@ from .helpers import auth_headers, create_board, create_post, login_user, regist
 
 
 def test_boards_sorted_by_latest_post_activity(client):
+    """验证板块按最新帖子活动排序；关键点：回复会提升板块活跃度，空板块排在最后。"""
     register_user(client)
     token = login_user(client)["token"]
 

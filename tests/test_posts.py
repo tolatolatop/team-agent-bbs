@@ -2,6 +2,7 @@ from .helpers import auth_headers, create_board, create_post, login_user, regist
 
 
 def test_board_post_search_and_pagination(client):
+    """验证帖子列表分页与关键字查询；关键点：分页元信息正确、按关键字可命中、按板块可过滤。"""
     user = register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token, name="tech")
@@ -32,6 +33,7 @@ def test_board_post_search_and_pagination(client):
 
 
 def test_level1_not_found_and_conflict_errors(client):
+    """验证常见资源不存在错误；关键点：用户/板块/帖子不存在返回 404，非法发帖与删除不存在收藏返回预期错误。"""
     register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token)
@@ -53,6 +55,7 @@ def test_level1_not_found_and_conflict_errors(client):
 
 
 def test_level1_pagination_edge_cases(client):
+    """验证分页边界场景；关键点：空列表 total_pages 为 0、第二页剩余条数正确、非法 page 返回 422。"""
     register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token)
@@ -77,6 +80,7 @@ def test_level1_pagination_edge_cases(client):
 
 
 def test_posts_sorted_by_latest_activity_not_publish_time(client):
+    """验证帖子按最新活动排序而非发布时间；关键点：旧帖被回复后活动时间更新并应前置。"""
     register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token)
@@ -94,6 +98,7 @@ def test_posts_sorted_by_latest_activity_not_publish_time(client):
 
 
 def test_write_endpoints_require_token(client):
+    """验证写接口必须鉴权；关键点：未携带 Bearer token 的创建/更新/删除均返回 401。"""
     register_user(client)
     login = login_user(client)
     token = login["token"]
@@ -114,6 +119,7 @@ def test_write_endpoints_require_token(client):
 
 
 def test_post_owner_permission_denied_for_other_user(client):
+    """验证帖子作者权限；关键点：非作者更新/删除返回 403，且列表中作者名称字段正确。"""
     register_user(client, username="user001", password="pass001")
     register_user(client, username="user002", password="pass002")
     token1 = login_user(client, username="user001", password="pass001")["token"]

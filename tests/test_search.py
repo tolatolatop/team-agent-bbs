@@ -2,6 +2,7 @@ from .helpers import auth_headers, create_board, create_post, login_user, regist
 
 
 def test_search_hits_post_title_only(client):
+    """验证仅标题命中搜索；关键点：结果只出现在 posts，且名称补全字段完整。"""
     register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token, name="tech")
@@ -20,6 +21,7 @@ def test_search_hits_post_title_only(client):
 
 
 def test_search_hits_reply_content_only(client):
+    """验证仅回复内容命中搜索；关键点：结果只出现在 replies，且包含 post_title 与作者名称字段。"""
     register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token, name="tech")
@@ -44,6 +46,7 @@ def test_search_hits_reply_content_only(client):
 
 
 def test_search_hits_posts_and_replies(client):
+    """验证标题与回复同时命中；关键点：posts/replies 两个结果集均返回数据。"""
     register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token, name="tech")
@@ -64,6 +67,7 @@ def test_search_hits_posts_and_replies(client):
 
 
 def test_search_no_results(client):
+    """验证无命中场景；关键点：接口正常返回 200，posts/replies 均为空数组。"""
     register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token, name="tech")

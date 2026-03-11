@@ -2,6 +2,7 @@ from .helpers import login_user, register_user
 
 
 def test_auth_register_login_and_me(client):
+    """验证注册-登录-鉴权主链路；关键点：重复注册冲突、带 token 可访问 /auth/me、缺少 token 返回 401。"""
     user = register_user(client)
 
     duplicate = client.post(
@@ -21,6 +22,7 @@ def test_auth_register_login_and_me(client):
 
 
 def test_level1_auth_and_validation_errors(client):
+    """验证认证与参数校验错误分支；关键点：短用户名 422、错误登录 401、错误/无效授权头 401。"""
     short_name = client.post(
         "/auth/register",
         json={"username": "u1", "password": "pass001", "nickname": "nick", "bio": ""},

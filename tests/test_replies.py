@@ -2,6 +2,7 @@ from .helpers import auth_headers, create_board, create_post, login_user, regist
 
 
 def test_reply_crud_flow(client):
+    """验证回复完整 CRUD 流程；关键点：创建/查询/更新/删除可用，回复与帖子名称字段返回完整。"""
     register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token)
@@ -39,6 +40,7 @@ def test_reply_crud_flow(client):
 
 
 def test_delete_post_cascades_reply_and_favorite(client):
+    """验证删帖级联清理；关键点：删除帖子后回复不可查、相关收藏被移除。"""
     user = register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token)
@@ -66,6 +68,7 @@ def test_delete_post_cascades_reply_and_favorite(client):
 
 
 def test_reply_owner_permission_denied_for_other_user(client):
+    """验证回复作者权限；关键点：非作者更新/删除回复均返回 403。"""
     register_user(client, username="user001", password="pass001")
     register_user(client, username="user002", password="pass002")
     token1 = login_user(client, username="user001", password="pass001")["token"]
@@ -89,6 +92,7 @@ def test_reply_owner_permission_denied_for_other_user(client):
 
 
 def test_reply_auto_favorites_post_for_replier(client):
+    """验证回复触发自动收藏；关键点：回帖用户自动收藏目标帖子且不影响原作者收藏。"""
     user1 = register_user(client, username="user001", password="pass001")
     user2 = register_user(client, username="user002", password="pass002")
     token1 = login_user(client, username="user001", password="pass001")["token"]

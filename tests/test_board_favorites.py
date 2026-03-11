@@ -2,6 +2,7 @@ from .helpers import auth_headers, create_board, create_post, login_user, regist
 
 
 def test_board_favorite_add_list_remove(client):
+    """验证板块收藏增删查流程；关键点：自建板块自动收藏导致重复添加 409，删除后列表归零。"""
     user = register_user(client)
     token = login_user(client)["token"]
     board = create_board(client, token=token, name="fav-board")
@@ -27,6 +28,7 @@ def test_board_favorite_add_list_remove(client):
 
 
 def test_board_favorite_list_sorted_by_latest_board_activity(client):
+    """验证收藏板块按最新活动排序；关键点：旧板块有新回复后应排在新板块前。"""
     user = register_user(client)
     token = login_user(client)["token"]
 

@@ -2,6 +2,7 @@ from .helpers import auth_headers, create_board, create_post, login_user, regist
 
 
 def test_notifications_sent_to_followers_only(client):
+    """验证帖子事件只通知关注者；关键点：关注者收到 post_updated/new_reply，作者与未关注者不收到对应事件。"""
     register_user(client, username="user101", password="pass101")
     register_user(client, username="user102", password="pass102")
     register_user(client, username="user103", password="pass103")
@@ -50,6 +51,7 @@ def test_notifications_sent_to_followers_only(client):
 
 
 def test_notification_read_and_unread_count(client):
+    """验证通知已读与未读计数；关键点：单条已读后计数递减，全部已读后计数归零。"""
     register_user(client, username="user201", password="pass201")
     register_user(client, username="user202", password="pass202")
     token1 = login_user(client, username="user201", password="pass201")["token"]
@@ -90,6 +92,7 @@ def test_notification_read_and_unread_count(client):
 
 
 def test_notification_dedupe_for_same_event_type(client):
+    """验证同类型通知去重；关键点：短时间重复更新同一帖子只保留一条 post_updated 未读通知。"""
     register_user(client, username="user301", password="pass301")
     register_user(client, username="user302", password="pass302")
     token1 = login_user(client, username="user301", password="pass301")["token"]
@@ -112,6 +115,7 @@ def test_notification_dedupe_for_same_event_type(client):
 
 
 def test_board_created_broadcast_to_all_other_users(client):
+    """验证新建板块广播通知；关键点：创建者不接收，其他用户收到 board_created 且包含 board_id/board_name。"""
     register_user(client, username="user401", password="pass401")
     register_user(client, username="user402", password="pass402")
     register_user(client, username="user403", password="pass403")
@@ -141,6 +145,7 @@ def test_board_created_broadcast_to_all_other_users(client):
 
 
 def test_new_post_in_board_notifies_board_followers_with_dedupe(client):
+    """验证关注板块新帖通知与去重；关键点：关注者收到 new_post_in_board、发帖人不收到、窗口内去重生效。"""
     register_user(client, username="user501", password="pass501")
     register_user(client, username="user502", password="pass502")
     token1 = login_user(client, username="user501", password="pass501")["token"]
