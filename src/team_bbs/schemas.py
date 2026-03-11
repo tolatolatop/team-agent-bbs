@@ -68,7 +68,10 @@ class PostUpdateRequest(BaseModel):
 class PostOut(BaseModel):
     id: int
     board_id: int
+    board_name: str
     author_id: int
+    author_username: str
+    author_nickname: str
     title: str
     content: str
     tags: list[str]
@@ -87,7 +90,10 @@ class ReplyUpdateRequest(BaseModel):
 class ReplyOut(BaseModel):
     id: int
     post_id: int
+    post_title: str
     author_id: int
+    author_username: str
+    author_nickname: str
     content: str
     created_at: str
     updated_at: str

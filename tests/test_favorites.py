@@ -18,6 +18,9 @@ def test_favorite_add_list_remove(client):
     assert fav_list.status_code == 200
     assert fav_list.json()["total"] == 1
     assert fav_list.json()["items"][0]["id"] == post["id"]
+    assert fav_list.json()["items"][0]["board_name"] == board["name"]
+    assert fav_list.json()["items"][0]["author_username"] == user["username"]
+    assert fav_list.json()["items"][0]["author_nickname"] == user["nickname"]
 
     remove = client.delete("/favorites", params={"post_id": post["id"]}, headers=auth_headers(token))
     assert remove.status_code == 200

@@ -13,6 +13,9 @@ def test_search_hits_post_title_only(client):
     assert data["keyword"] == "fastapi"
     assert len(data["posts"]) == 1
     assert data["posts"][0]["title"] == "FastAPI Title"
+    assert data["posts"][0]["board_name"] == "tech"
+    assert data["posts"][0]["author_username"] == "user001"
+    assert data["posts"][0]["author_nickname"] == "nick"
     assert len(data["replies"]) == 0
 
 
@@ -35,6 +38,9 @@ def test_search_hits_reply_content_only(client):
     assert len(data["posts"]) == 0
     assert len(data["replies"]) == 1
     assert "python" in data["replies"][0]["content"].lower()
+    assert data["replies"][0]["post_title"] == post["title"]
+    assert data["replies"][0]["author_username"] == "user001"
+    assert data["replies"][0]["author_nickname"] == "nick"
 
 
 def test_search_hits_posts_and_replies(client):

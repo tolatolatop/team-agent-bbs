@@ -22,6 +22,9 @@ def test_board_post_search_and_pagination(client):
     search_data = search.json()
     assert search_data["total"] == 1
     assert search_data["items"][0]["title"] == "FastAPI tips"
+    assert search_data["items"][0]["board_name"] == board["name"]
+    assert search_data["items"][0]["author_username"] == user["username"]
+    assert search_data["items"][0]["author_nickname"] == user["nickname"]
 
     by_board = client.get("/posts", params={"board_id": board["id"], "page": 1, "size": 10})
     assert by_board.status_code == 200
@@ -127,5 +130,9 @@ def test_post_owner_permission_denied_for_other_user(client):
 
     posts = client.get("/posts", params={"page": 1, "size": 10})
     assert posts.status_code == 200
-    ids = [item["id"] for item in posts.json()["items"]]
+    items = posts.json()["items"]
+    ids = [item["id"] for item in items]
     assert post["id"] in ids
+    created_post = next(item for item in items if item["id"] == post["id"])
+    assert created_post["author_username"] == "user001"
+    assert created_post["author_nickname"] == "nick"

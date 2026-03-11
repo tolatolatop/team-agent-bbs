@@ -38,11 +38,40 @@ def _board_out(board: Board) -> dict[str, Any]:
     return {"id": board.id, "name": board.name, "description": board.description, "created_at": _to_iso(board.created_at)}
 
 
-def _post_out(post: Post) -> dict[str, Any]:
+def _build_user_info_map(db, user_ids: set[int]) -> dict[int, tuple[str, str]]:
+    if not user_ids:
+        return {}
+    users = db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+    return {user.id: (user.username, user.nickname) for user in users}
+
+
+def _build_board_name_map(db, board_ids: set[int]) -> dict[int, str]:
+    if not board_ids:
+        return {}
+    boards = db.execute(select(Board).where(Board.id.in_(board_ids))).scalars().all()
+    return {board.id: board.name for board in boards}
+
+
+def _build_post_title_map(db, post_ids: set[int]) -> dict[int, str]:
+    if not post_ids:
+        return {}
+    posts = db.execute(select(Post).where(Post.id.in_(post_ids))).scalars().all()
+    return {post.id: post.title for post in posts}
+
+
+def _post_out(
+    post: Post,
+    board_name: str = "",
+    author_username: str = "",
+    author_nickname: str = "",
+) -> dict[str, Any]:
     return {
         "id": post.id,
         "board_id": post.board_id,
+        "board_name": board_name,
         "author_id": post.author_id,
+        "author_username": author_username,
+        "author_nickname": author_nickname,
         "title": post.title,
         "content": post.content,
         "tags": json.loads(post.tags or "[]"),
@@ -51,11 +80,19 @@ def _post_out(post: Post) -> dict[str, Any]:
     }
 
 
-def _reply_out(reply: Reply) -> dict[str, Any]:
+def _reply_out(
+    reply: Reply,
+    post_title: str = "",
+    author_username: str = "",
+    author_nickname: str = "",
+) -> dict[str, Any]:
     return {
         "id": reply.id,
         "post_id": reply.post_id,
+        "post_title": post_title,
         "author_id": reply.author_id,
+        "author_username": author_username,
+        "author_nickname": author_nickname,
         "content": reply.content,
         "created_at": _to_iso(reply.created_at),
         "updated_at": _to_iso(reply.updated_at),
@@ -208,7 +245,12 @@ def create_post(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]
         # Default behavior: auto-favorite user's own post.
         ensure_post_favorite(db, user_id=current_user_id, post_id=post.id)
         db.refresh(post)
-        return _post_out(post)
+        return _post_out(
+            post,
+            board_name=board.name,
+            author_username=author.username,
+            author_nickname=author.nickname,
+        )
 
 
 def list_posts(page: int, size: int, board_id: int | None = None, keyword: str | None = None) -> dict[str, Any]:
@@ -223,7 +265,20 @@ def list_posts(page: int, size: int, board_id: int | None = None, keyword: str |
         posts = db.execute(stmt).scalars().all()
         activity_map = _build_post_last_activity_map(db, posts)
         posts.sort(key=lambda post: activity_map.get(post.id, post.updated_at), reverse=True)
-        return paginate([_post_out(post) for post in posts], page, size)
+        board_name_map = _build_board_name_map(db, {post.board_id for post in posts})
+        user_info_map = _build_user_info_map(db, {post.author_id for post in posts})
+        items = []
+        for post in posts:
+            username, nickname = user_info_map.get(post.author_id, ("", ""))
+            items.append(
+                _post_out(
+                    post,
+                    board_name=board_name_map.get(post.board_id, ""),
+                    author_username=username,
+                    author_nickname=nickname,
+                )
+            )
+        return paginate(items, page, size)
 
 
 def get_post(post_id: int) -> dict[str, Any]:
@@ -231,7 +286,15 @@ def get_post(post_id: int) -> dict[str, Any]:
         post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
         if post is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
-        return _post_out(post)
+        board_name_map = _build_board_name_map(db, {post.board_id})
+        user_info_map = _build_user_info_map(db, {post.author_id})
+        username, nickname = user_info_map.get(post.author_id, ("", ""))
+        return _post_out(
+            post,
+            board_name=board_name_map.get(post.board_id, ""),
+            author_username=username,
+            author_nickname=nickname,
+        )
 
 
 def update_post(post_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
@@ -251,7 +314,15 @@ def update_post(post_id: int, payload: dict[str, Any], current_user_id: int) -> 
         post.updated_at = now_utc()
         db.flush()
         db.refresh(post)
-        return _post_out(post)
+        board_name_map = _build_board_name_map(db, {post.board_id})
+        user_info_map = _build_user_info_map(db, {post.author_id})
+        username, nickname = user_info_map.get(post.author_id, ("", ""))
+        return _post_out(
+            post,
+            board_name=board_name_map.get(post.board_id, ""),
+            author_username=username,
+            author_nickname=nickname,
+        )
 
 
 def delete_post(post_id: int, current_user_id: int) -> dict[str, Any]:
@@ -284,7 +355,12 @@ def create_reply(post_id: int, payload: dict[str, Any], current_user_id: int) ->
         # Default behavior: replying a post auto-favorites that post for the replier.
         ensure_post_favorite(db, user_id=current_user_id, post_id=post_id)
         db.refresh(reply)
-        return _reply_out(reply)
+        return _reply_out(
+            reply,
+            post_title=post.title,
+            author_username=author.username,
+            author_nickname=author.nickname,
+        )
 
 
 def list_replies(post_id: int, page: int, size: int) -> dict[str, Any]:
@@ -295,8 +371,27 @@ def list_replies(post_id: int, page: int, size: int) -> dict[str, Any]:
 
         replies = db.execute(select(Reply).where(Reply.post_id == post_id)).scalars().all()
         replies.sort(key=lambda reply: reply.updated_at, reverse=True)
-        result = paginate([_reply_out(reply) for reply in replies], page, size)
-        result["post"] = _post_out(post)
+        user_info_map = _build_user_info_map(db, {reply.author_id for reply in replies} | {post.author_id})
+        board_name_map = _build_board_name_map(db, {post.board_id})
+        reply_items = []
+        for reply in replies:
+            username, nickname = user_info_map.get(reply.author_id, ("", ""))
+            reply_items.append(
+                _reply_out(
+                    reply,
+                    post_title=post.title,
+                    author_username=username,
+                    author_nickname=nickname,
+                )
+            )
+        result = paginate(reply_items, page, size)
+        post_username, post_nickname = user_info_map.get(post.author_id, ("", ""))
+        result["post"] = _post_out(
+            post,
+            board_name=board_name_map.get(post.board_id, ""),
+            author_username=post_username,
+            author_nickname=post_nickname,
+        )
         return result
 
 
@@ -311,7 +406,15 @@ def update_reply(reply_id: int, payload: dict[str, Any], current_user_id: int) -
         reply.updated_at = now_utc()
         db.flush()
         db.refresh(reply)
-        return _reply_out(reply)
+        user_info_map = _build_user_info_map(db, {reply.author_id})
+        post_title_map = _build_post_title_map(db, {reply.post_id})
+        username, nickname = user_info_map.get(reply.author_id, ("", ""))
+        return _reply_out(
+            reply,
+            post_title=post_title_map.get(reply.post_id, ""),
+            author_username=username,
+            author_nickname=nickname,
+        )
 
 
 def delete_reply(reply_id: int, current_user_id: int) -> dict[str, Any]:
@@ -371,7 +474,20 @@ def list_favorites(user_id: int, page: int, size: int) -> dict[str, Any]:
         activity_map = _build_post_last_activity_map(db, posts)
         posts = [post_map[fav.post_id] for fav in favorite_rows if fav.post_id in post_map]
         posts.sort(key=lambda post: activity_map.get(post.id, post.updated_at), reverse=True)
-        return paginate([_post_out(post) for post in posts], page, size)
+        board_name_map = _build_board_name_map(db, {post.board_id for post in posts})
+        user_info_map = _build_user_info_map(db, {post.author_id for post in posts})
+        items = []
+        for post in posts:
+            username, nickname = user_info_map.get(post.author_id, ("", ""))
+            items.append(
+                _post_out(
+                    post,
+                    board_name=board_name_map.get(post.board_id, ""),
+                    author_username=username,
+                    author_nickname=nickname,
+                )
+            )
+        return paginate(items, page, size)
 
 
 def add_board_favorite(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
@@ -451,9 +567,29 @@ def simple_search(keyword: str) -> dict[str, Any]:
 
         posts = db.execute(select(Post).where(func.lower(Post.title).like(query))).scalars().all()
         replies = db.execute(select(Reply).where(func.lower(Reply.content).like(query))).scalars().all()
+        board_name_map = _build_board_name_map(db, {post.board_id for post in posts})
+        post_user_map = _build_user_info_map(db, {post.author_id for post in posts})
+        reply_user_map = _build_user_info_map(db, {reply.author_id for reply in replies})
+        post_title_map = _build_post_title_map(db, {reply.post_id for reply in replies})
 
         return {
             "keyword": keyword,
-            "posts": [_post_out(post) for post in posts],
-            "replies": [_reply_out(reply) for reply in replies],
+            "posts": [
+                _post_out(
+                    post,
+                    board_name=board_name_map.get(post.board_id, ""),
+                    author_username=post_user_map.get(post.author_id, ("", ""))[0],
+                    author_nickname=post_user_map.get(post.author_id, ("", ""))[1],
+                )
+                for post in posts
+            ],
+            "replies": [
+                _reply_out(
+                    reply,
+                    post_title=post_title_map.get(reply.post_id, ""),
+                    author_username=reply_user_map.get(reply.author_id, ("", ""))[0],
+                    author_nickname=reply_user_map.get(reply.author_id, ("", ""))[1],
+                )
+                for reply in replies
+            ],
         }

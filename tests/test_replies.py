@@ -19,8 +19,12 @@ def test_reply_crud_flow(client):
     assert list_reply.status_code == 200
     assert list_reply.json()["post"]["id"] == post["id"]
     assert list_reply.json()["post"]["content"] == post["content"]
+    assert list_reply.json()["post"]["board_name"] == board["name"]
     assert list_reply.json()["total"] == 1
     assert list_reply.json()["items"][0]["id"] == reply["id"]
+    assert list_reply.json()["items"][0]["author_username"] == "user001"
+    assert list_reply.json()["items"][0]["author_nickname"] == "nick"
+    assert list_reply.json()["items"][0]["post_title"] == post["title"]
 
     update_reply = client.put(f"/replies/{reply['id']}", json={"content": "updated"}, headers=auth_headers(token))
     assert update_reply.status_code == 200
