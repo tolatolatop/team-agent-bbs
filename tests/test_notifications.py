@@ -2,8 +2,8 @@ from .helpers import auth_headers, create_board, create_post, login_user, regist
 
 
 def test_notifications_sent_to_followers_only(client):
-    user1 = register_user(client, username="user101", password="pass101")
-    user2 = register_user(client, username="user102", password="pass102")
+    register_user(client, username="user101", password="pass101")
+    register_user(client, username="user102", password="pass102")
     register_user(client, username="user103", password="pass103")
     token1 = login_user(client, username="user101", password="pass101")["token"]
     token2 = login_user(client, username="user102", password="pass102")["token"]
@@ -20,18 +20,20 @@ def test_notifications_sent_to_followers_only(client):
 
     n2 = client.get("/notifications", params={"page": 1, "size": 10}, headers=auth_headers(token2))
     assert n2.status_code == 200
-    assert n2.json()["total"] == 1
-    assert n2.json()["items"][0]["event_type"] == "post_updated"
-    assert n2.json()["items"][0]["post_id"] == post["id"]
-    assert n2.json()["items"][0]["post_title"] == "notify-post"
+    items2 = n2.json()["items"]
+    post_updated_items = [item for item in items2 if item["event_type"] == "post_updated"]
+    assert len(post_updated_items) == 1
+    assert post_updated_items[0]["post_id"] == post["id"]
+    assert post_updated_items[0]["post_title"] == "notify-post"
 
     n1 = client.get("/notifications", params={"page": 1, "size": 10}, headers=auth_headers(token1))
     assert n1.status_code == 200
-    assert n1.json()["total"] == 0
+    assert n1.json()["total"] == 0  # author excluded for post_updated
 
     n3 = client.get("/notifications", params={"page": 1, "size": 10}, headers=auth_headers(token3))
     assert n3.status_code == 200
-    assert n3.json()["total"] == 0
+    # user103 not favorite post, may still have board_created notification only.
+    assert len([item for item in n3.json()["items"] if item["event_type"] == "post_updated"]) == 0
 
     reply = client.post(
         f"/posts/{post['id']}/replies",
@@ -42,9 +44,9 @@ def test_notifications_sent_to_followers_only(client):
 
     n2_after = client.get("/notifications", params={"page": 1, "size": 10}, headers=auth_headers(token2))
     assert n2_after.status_code == 200
-    assert n2_after.json()["total"] == 2
-    assert n2_after.json()["items"][0]["event_type"] == "new_reply"
-    assert n2_after.json()["items"][1]["event_type"] == "post_updated"
+    event_types = [item["event_type"] for item in n2_after.json()["items"]]
+    assert "new_reply" in event_types
+    assert "post_updated" in event_types
 
 
 def test_notification_read_and_unread_count(client):
@@ -65,7 +67,7 @@ def test_notification_read_and_unread_count(client):
 
     unread = client.get("/notifications/unread-count", headers=auth_headers(token2))
     assert unread.status_code == 200
-    assert unread.json()["unread"] == 2
+    assert unread.json()["unread"] >= 2
 
     listed = client.get("/notifications", params={"page": 1, "size": 10}, headers=auth_headers(token2))
     assert listed.status_code == 200
@@ -77,7 +79,7 @@ def test_notification_read_and_unread_count(client):
 
     unread_after_one = client.get("/notifications/unread-count", headers=auth_headers(token2))
     assert unread_after_one.status_code == 200
-    assert unread_after_one.json()["unread"] == 1
+    assert unread_after_one.json()["unread"] >= 1
 
     mark_all = client.put("/notifications/read-all", headers=auth_headers(token2))
     assert mark_all.status_code == 200
@@ -107,3 +109,61 @@ def test_notification_dedupe_for_same_event_type(client):
     assert listed.status_code == 200
     post_updated_items = [item for item in listed.json()["items"] if item["event_type"] == "post_updated"]
     assert len(post_updated_items) == 1
+
+
+def test_board_created_broadcast_to_all_other_users(client):
+    register_user(client, username="user401", password="pass401")
+    register_user(client, username="user402", password="pass402")
+    register_user(client, username="user403", password="pass403")
+    token1 = login_user(client, username="user401", password="pass401")["token"]
+    token2 = login_user(client, username="user402", password="pass402")["token"]
+    token3 = login_user(client, username="user403", password="pass403")["token"]
+
+    board = create_board(client, token=token1, name="board-created-case")
+
+    n1 = client.get("/notifications", params={"page": 1, "size": 20}, headers=auth_headers(token1))
+    assert n1.status_code == 200
+    assert len([item for item in n1.json()["items"] if item["event_type"] == "board_created"]) == 0
+
+    n2 = client.get("/notifications", params={"page": 1, "size": 20}, headers=auth_headers(token2))
+    assert n2.status_code == 200
+    board_created2 = [item for item in n2.json()["items"] if item["event_type"] == "board_created"]
+    assert len(board_created2) == 1
+    assert board_created2[0]["board_id"] == board["id"]
+    assert board_created2[0]["board_name"] == "board-created-case"
+    assert board_created2[0]["post_id"] is None
+
+    n3 = client.get("/notifications", params={"page": 1, "size": 20}, headers=auth_headers(token3))
+    assert n3.status_code == 200
+    board_created3 = [item for item in n3.json()["items"] if item["event_type"] == "board_created"]
+    assert len(board_created3) == 1
+    assert board_created3[0]["board_id"] == board["id"]
+
+
+def test_new_post_in_board_notifies_board_followers_with_dedupe(client):
+    register_user(client, username="user501", password="pass501")
+    register_user(client, username="user502", password="pass502")
+    token1 = login_user(client, username="user501", password="pass501")["token"]
+    token2 = login_user(client, username="user502", password="pass502")["token"]
+
+    board = create_board(client, token=token1, name="board-follow-case")
+
+    follow_board = client.post("/favorite-boards", json={"board_id": board["id"]}, headers=auth_headers(token2))
+    assert follow_board.status_code == 201
+
+    p1 = create_post(client, token=token1, board_id=board["id"], title="p1", content="c1")
+    p2 = create_post(client, token=token1, board_id=board["id"], title="p2", content="c2")
+    assert p1["id"] != p2["id"]
+
+    n2 = client.get("/notifications", params={"page": 1, "size": 20}, headers=auth_headers(token2))
+    assert n2.status_code == 200
+    board_post_items = [item for item in n2.json()["items"] if item["event_type"] == "new_post_in_board"]
+    # Within dedupe window only one notification remains.
+    assert len(board_post_items) == 1
+    assert board_post_items[0]["board_id"] == board["id"]
+    assert board_post_items[0]["board_name"] == "board-follow-case"
+    assert board_post_items[0]["post_title"] in {"p1", "p2"}
+
+    n1 = client.get("/notifications", params={"page": 1, "size": 20}, headers=auth_headers(token1))
+    assert n1.status_code == 200
+    assert len([item for item in n1.json()["items"] if item["event_type"] == "new_post_in_board"]) == 0

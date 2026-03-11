@@ -45,17 +45,19 @@ def _build_user_info_map(db, user_ids: set[int]) -> dict[int, tuple[str, str]]:
     return {user.id: (user.username, user.nickname) for user in users}
 
 
-def _build_board_name_map(db, board_ids: set[int]) -> dict[int, str]:
-    if not board_ids:
+def _build_board_name_map(db, board_ids: set[int | None]) -> dict[int, str]:
+    clean_ids = {board_id for board_id in board_ids if board_id is not None}
+    if not clean_ids:
         return {}
-    boards = db.execute(select(Board).where(Board.id.in_(board_ids))).scalars().all()
+    boards = db.execute(select(Board).where(Board.id.in_(clean_ids))).scalars().all()
     return {board.id: board.name for board in boards}
 
 
-def _build_post_title_map(db, post_ids: set[int]) -> dict[int, str]:
-    if not post_ids:
+def _build_post_title_map(db, post_ids: set[int | None]) -> dict[int, str]:
+    clean_ids = {post_id for post_id in post_ids if post_id is not None}
+    if not clean_ids:
         return {}
-    posts = db.execute(select(Post).where(Post.id.in_(post_ids))).scalars().all()
+    posts = db.execute(select(Post).where(Post.id.in_(clean_ids))).scalars().all()
     return {post.id: post.title for post in posts}
 
 
@@ -104,15 +106,21 @@ def _notification_message(event_type: str) -> str:
         return "你关注的帖子有更新"
     if event_type == "new_reply":
         return "你关注的帖子有新回复"
+    if event_type == "board_created":
+        return "有新板块已创建"
+    if event_type == "new_post_in_board":
+        return "你关注的板块有新帖子"
     return "你关注的帖子有新动态"
 
 
-def _notification_out(notification: Notification, post_title: str = "") -> dict[str, Any]:
+def _notification_out(notification: Notification, post_title: str = "", board_name: str = "") -> dict[str, Any]:
     return {
         "id": notification.id,
         "user_id": notification.user_id,
         "post_id": notification.post_id,
+        "board_id": notification.board_id,
         "post_title": post_title,
+        "board_name": board_name,
         "event_type": notification.event_type,
         "message": notification.message,
         "is_read": notification.is_read,
@@ -213,6 +221,7 @@ def create_board(payload: dict[str, Any]) -> dict[str, Any]:
         creator_id = payload.get("creator_id")
         if creator_id is not None:
             ensure_board_favorite(db, user_id=creator_id, board_id=board.id)
+            notify_all_users_board_created(db, board=board, actor_user_id=creator_id, event_at=now_utc())
         db.refresh(board)
         return _board_out(board)
 
@@ -266,6 +275,7 @@ def create_post(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]
         db.flush()
         # Default behavior: auto-favorite user's own post.
         ensure_post_favorite(db, user_id=current_user_id, post_id=post.id)
+        notify_board_followers_new_post(db, post=post, actor_user_id=current_user_id, event_at=now)
         db.refresh(post)
         return _post_out(
             post,
@@ -350,6 +360,64 @@ def notify_post_followers(db, post: Post, actor_user_id: int, event_type: str, e
                 post_id=post.id,
                 event_type=event_type,
                 message=_notification_message(event_type),
+                is_read=False,
+                event_at=event_at,
+            )
+        )
+
+
+def notify_all_users_board_created(db, board: Board, actor_user_id: int, event_at: datetime) -> None:
+    user_rows = db.execute(select(User.id)).all()
+    user_ids = {user_id for user_id, in user_rows if user_id != actor_user_id}
+    if not user_ids:
+        return
+    for user_id in user_ids:
+        db.add(
+            Notification(
+                user_id=user_id,
+                post_id=None,
+                board_id=board.id,
+                event_type="board_created",
+                message=_notification_message("board_created"),
+                is_read=False,
+                event_at=event_at,
+            )
+        )
+
+
+def notify_board_followers_new_post(db, post: Post, actor_user_id: int, event_at: datetime) -> None:
+    follower_rows = db.execute(select(BoardFavorite.user_id).where(BoardFavorite.board_id == post.board_id)).all()
+    follower_ids = {user_id for user_id, in follower_rows if user_id != actor_user_id}
+    if not follower_ids:
+        return
+
+    dedupe_window_start = event_at - timedelta(minutes=5)
+    for follower_id in follower_ids:
+        existing = db.execute(
+            select(Notification)
+            .where(
+                and_(
+                    Notification.user_id == follower_id,
+                    Notification.board_id == post.board_id,
+                    Notification.event_type == "new_post_in_board",
+                    Notification.is_read.is_(False),
+                    Notification.created_at >= dedupe_window_start,
+                )
+            )
+            .order_by(Notification.created_at.desc())
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.event_at = event_at
+            existing.message = _notification_message("new_post_in_board")
+            existing.post_id = post.id
+            continue
+        db.add(
+            Notification(
+                user_id=follower_id,
+                post_id=post.id,
+                board_id=post.board_id,
+                event_type="new_post_in_board",
+                message=_notification_message("new_post_in_board"),
                 is_read=False,
                 event_at=event_at,
             )
@@ -626,7 +694,15 @@ def list_notifications(current_user_id: int, page: int, size: int) -> dict[str, 
             .order_by(Notification.created_at.desc())
         ).scalars().all()
         post_title_map = _build_post_title_map(db, {row.post_id for row in rows})
-        items = [_notification_out(row, post_title=post_title_map.get(row.post_id, "")) for row in rows]
+        board_name_map = _build_board_name_map(db, {row.board_id for row in rows})
+        items = [
+            _notification_out(
+                row,
+                post_title=post_title_map.get(row.post_id, ""),
+                board_name=board_name_map.get(row.board_id, ""),
+            )
+            for row in rows
+        ]
         return paginate(items, page, size)
 
 
@@ -651,7 +727,12 @@ def mark_notification_read(notification_id: int, current_user_id: int) -> dict[s
         db.flush()
         db.refresh(row)
         post_title_map = _build_post_title_map(db, {row.post_id})
-        return _notification_out(row, post_title=post_title_map.get(row.post_id, ""))
+        board_name_map = _build_board_name_map(db, {row.board_id})
+        return _notification_out(
+            row,
+            post_title=post_title_map.get(row.post_id, ""),
+            board_name=board_name_map.get(row.board_id, ""),
+        )
 
 
 def mark_all_notifications_read(current_user_id: int) -> dict[str, Any]:

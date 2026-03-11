@@ -88,11 +88,13 @@ class Notification(Base):
     __table_args__ = (
         Index("ix_notifications_user_read_created", "user_id", "is_read", "created_at"),
         Index("ix_notifications_dedupe_lookup", "user_id", "post_id", "event_type", "created_at"),
+        Index("ix_notifications_board_dedupe_lookup", "user_id", "board_id", "event_type", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    post_id: Mapped[int] = mapped_column(ForeignKey("posts.id"), index=True)
+    post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id"), index=True, nullable=True)
+    board_id: Mapped[int | None] = mapped_column(ForeignKey("boards.id"), index=True, nullable=True)
     event_type: Mapped[str] = mapped_column(String(32))
     message: Mapped[str] = mapped_column(String(200))
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)

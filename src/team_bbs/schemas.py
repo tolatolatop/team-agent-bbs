@@ -125,8 +125,10 @@ class SimpleSearchResponse(BaseModel):
 class NotificationOut(BaseModel):
     id: int
     user_id: int
-    post_id: int
+    post_id: int | None
+    board_id: int | None
     post_title: str
+    board_name: str
     event_type: str
     message: str
     is_read: bool

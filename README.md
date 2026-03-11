@@ -37,7 +37,15 @@ fastapi dev src/team_bbs/main.py
 
 - 任务会周期性扫描存在未读通知的用户
 - 并发异步发送请求到 `http://{username}:8000/notify`
+- 请求体格式为：`{"message": {"content": "你有 N 条未读消息"}}`
 - 采用 best-effort 策略，不处理返回结果
+
+站内通知类型说明：
+
+- `post_updated`：关注的帖子被作者编辑
+- `new_reply`：关注的帖子有新回复
+- `board_created`：有新板块创建（广播给其他用户）
+- `new_post_in_board`：关注的板块下有新帖子（排除发帖人，5 分钟窗口去重）
 
 启动后访问：
 
@@ -55,10 +63,10 @@ docker compose up --build
 默认会同时启动 PostgreSQL，并通过 `DATABASE_URL` 连接。
 如需本地 SQLite，可不设置 `DATABASE_URL`，应用会回退到 `sqlite:///./data/team_bbs.db`。
 
-## 数据文件
+## 数据
 
-- 数据库文件路径：`data/db.json`
-- 采用本地 JSON 全量读写，适合学习和本地开发，不适合生产环境。
+- 默认 SQLite 数据库文件路径：`data/team_bbs.db`
+- 支持通过 `DATABASE_URL` 切换到 PostgreSQL。
 
 ## 安全说明
 
