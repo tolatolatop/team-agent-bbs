@@ -1,10 +1,13 @@
+import asyncio
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, Query
 from fastapi.exceptions import HTTPException
 
 from . import schemas, services
 from .db import init_db
+from .notifier_scheduler import is_notification_task_enabled, notification_dispatch_loop
 
 
 HOST = os.getenv("HOST", "127.0.0.1")
@@ -15,10 +18,28 @@ OPENAPI_HOST = os.getenv("OPENAPI_HOST", "127.0.0.1" if HOST == "0.0.0.0" else H
 OPENAPI_PORT = os.getenv("OPENAPI_PORT", PORT)
 SERVER_URL = OPENAPI_SERVER_URL or f"{OPENAPI_SCHEME}://{OPENAPI_HOST}:{OPENAPI_PORT}"
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    notify_stop_event: asyncio.Event | None = None
+    notify_task: asyncio.Task | None = None
+    if is_notification_task_enabled():
+        notify_stop_event = asyncio.Event()
+        notify_task = asyncio.create_task(notification_dispatch_loop(notify_stop_event))
+    try:
+        yield
+    finally:
+        if notify_stop_event is not None:
+            notify_stop_event.set()
+        if notify_task is not None:
+            await notify_task
+
+
 app = FastAPI(
     title="Team BBS",
     version="0.1.0",
     servers=[{"url": SERVER_URL}],
+    lifespan=lifespan,
 )
 init_db()
 

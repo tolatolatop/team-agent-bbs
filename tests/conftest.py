@@ -11,6 +11,7 @@ SRC_DIR = ROOT_DIR / "src"
 TEST_DB_PATH = ROOT_DIR / "data" / "test.db"
 
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH}"
+os.environ["NOTIFY_TASK_ENABLED"] = "false"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))

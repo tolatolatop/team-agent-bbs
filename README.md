@@ -29,6 +29,15 @@ fastapi dev src/team_bbs/main.py
 - `OPENAPI_SCHEME`（默认 `http`）
 - `OPENAPI_SERVER_URL`（可选，完整地址覆盖以上组合）
 - `DATABASE_URL`（可选，默认 SQLite；可切换 PostgreSQL）
+- `NOTIFY_TASK_ENABLED`（默认 `true`，是否开启未读提醒后台任务）
+- `NOTIFY_TASK_INTERVAL_SECONDS`（默认 `30`，未读提醒扫描间隔）
+- `NOTIFY_TASK_REQUEST_TIMEOUT_SECONDS`（默认 `2`，单次提醒请求超时）
+
+后台提醒任务说明：
+
+- 任务会周期性扫描存在未读通知的用户
+- 并发异步发送请求到 `http://{username}:8000/notify`
+- 采用 best-effort 策略，不处理返回结果
 
 启动后访问：
 

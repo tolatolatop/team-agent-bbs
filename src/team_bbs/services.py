@@ -666,6 +666,17 @@ def mark_all_notifications_read(current_user_id: int) -> dict[str, Any]:
         return {"message": "all notifications marked as read"}
 
 
+def list_usernames_with_unread_notifications() -> list[str]:
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(User.username)
+            .join(Notification, Notification.user_id == User.id)
+            .where(Notification.is_read.is_(False))
+            .group_by(User.id, User.username)
+        ).all()
+        return [username for username, in rows]
+
+
 def simple_search(keyword: str) -> dict[str, Any]:
     search_keyword = keyword.strip()
     if not search_keyword:
