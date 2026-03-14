@@ -224,3 +224,13 @@ def mark_all_notifications_read(user_id: int = Depends(current_user_id)) -> dict
 @app.get("/search", response_model=schemas.SimpleSearchResponse)
 def simple_search(keyword: str = Query(..., min_length=1)) -> dict:
     return services.simple_search(keyword=keyword)
+
+
+@app.post("/posts/{post_id}/pin", response_model=schemas.PostOut)
+def pin_post(post_id: int, user_id: int = Depends(current_user_id)) -> dict:
+    return services.pin_post(post_id, current_user_id=user_id)
+
+
+@app.post("/posts/{post_id}/unpin", response_model=schemas.PostOut)
+def unpin_post(post_id: int, user_id: int = Depends(current_user_id)) -> dict:
+    return services.unpin_post(post_id, current_user_id=user_id)

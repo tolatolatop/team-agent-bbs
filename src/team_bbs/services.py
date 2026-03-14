@@ -30,6 +30,7 @@ def _user_out(user: User) -> dict[str, Any]:
         "username": user.username,
         "nickname": user.nickname,
         "bio": user.bio,
+        "is_admin": user.is_admin,
         "created_at": _to_iso(user.created_at),
     }
 
@@ -77,6 +78,7 @@ def _post_out(
         "title": post.title,
         "content": post.content,
         "tags": json.loads(post.tags or "[]"),
+        "is_pinned": post.is_pinned,
         "created_at": _to_iso(post.created_at),
         "updated_at": _to_iso(post.updated_at),
     }
@@ -296,7 +298,9 @@ def list_posts(page: int, size: int, board_id: int | None = None, keyword: str |
 
         posts = db.execute(stmt).scalars().all()
         activity_map = _build_post_last_activity_map(db, posts)
-        posts.sort(key=lambda post: activity_map.get(post.id, post.updated_at), reverse=True)
+        # Sort: pinned posts first (by pinned_at desc), then by activity desc
+        posts.sort(key=lambda post: (not post.is_pinned, activity_map.get(post.id, post.updated_at) if not post.is_pinned else post.pinned_at or post.updated_at), reverse=False)
+        posts.reverse()  # Reverse to get correct order
         board_name_map = _build_board_name_map(db, {post.board_id for post in posts})
         user_info_map = _build_user_info_map(db, {post.author_id for post in posts})
         items = []
@@ -311,6 +315,79 @@ def list_posts(page: int, size: int, board_id: int | None = None, keyword: str |
                 )
             )
         return paginate(items, page, size)
+
+
+def pin_post(post_id: int, current_user_id: int) -> dict[str, Any]:
+    with SessionLocal.begin() as db:
+        # Check if user is admin
+        user = db.execute(select(User).where(User.id == current_user_id)).scalar_one_or_none()
+        if user is None or not user.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="only admin can pin post")
+
+        post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        if post is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+
+        if post.is_pinned:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="post already pinned")
+
+        # Check if board already has 3 pinned posts (P1 requirement)
+        pinned_count = db.execute(
+            select(func.count(Post.id)).where(and_(Post.board_id == post.board_id, Post.is_pinned == True))
+        ).scalar_one()
+        if pinned_count >= 3:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="board already has maximum 3 pinned posts")
+
+        now = now_utc()
+        post.is_pinned = True
+        post.pinned_at = now
+        post.pinned_by = current_user_id
+        post.updated_at = now
+
+        db.flush()
+        db.refresh(post)
+        board_name_map = _build_board_name_map(db, {post.board_id})
+        user_info_map = _build_user_info_map(db, {post.author_id})
+        username, nickname = user_info_map.get(post.author_id, ("", ""))
+        return _post_out(
+            post,
+            board_name=board_name_map.get(post.board_id, ""),
+            author_username=username,
+            author_nickname=nickname,
+        )
+
+
+def unpin_post(post_id: int, current_user_id: int) -> dict[str, Any]:
+    with SessionLocal.begin() as db:
+        # Check if user is admin
+        user = db.execute(select(User).where(User.id == current_user_id)).scalar_one_or_none()
+        if user is None or not user.is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="only admin can unpin post")
+
+        post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        if post is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="post not found")
+
+        if not post.is_pinned:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="post is not pinned")
+
+        now = now_utc()
+        post.is_pinned = False
+        post.pinned_at = None
+        post.pinned_by = None
+        post.updated_at = now
+
+        db.flush()
+        db.refresh(post)
+        board_name_map = _build_board_name_map(db, {post.board_id})
+        user_info_map = _build_user_info_map(db, {post.author_id})
+        username, nickname = user_info_map.get(post.author_id, ("", ""))
+        return _post_out(
+            post,
+            board_name=board_name_map.get(post.board_id, ""),
+            author_username=username,
+            author_nickname=nickname,
+        )
 
 
 def get_post(post_id: int) -> dict[str, Any]:

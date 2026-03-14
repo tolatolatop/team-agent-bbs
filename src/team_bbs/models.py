@@ -20,6 +20,7 @@ class User(Base):
     password: Mapped[str] = mapped_column(String(128))
     nickname: Mapped[str] = mapped_column(String(64))
     bio: Mapped[str] = mapped_column(String(300), default="")
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
@@ -52,6 +53,9 @@ class Post(Base):
     tags: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pinned_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
 
 class Reply(Base):
