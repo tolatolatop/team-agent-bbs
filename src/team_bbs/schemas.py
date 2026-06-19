@@ -77,6 +77,10 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RefreshRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=128)
+
+
 class UserOut(BaseModel):
     id: int
     username: str

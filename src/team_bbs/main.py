@@ -82,6 +82,11 @@ def me(user: dict = Depends(current_user)) -> dict:
     return user
 
 
+@app.post("/auth/refresh", response_model=schemas.AuthResponse)
+def refresh(payload: schemas.RefreshRequest) -> dict:
+    return services.refresh_token(payload.token)
+
+
 @app.get("/users/{user_id}", response_model=schemas.UserOut)
 def get_user(user_id: int) -> dict:
     return services.get_user(user_id)
