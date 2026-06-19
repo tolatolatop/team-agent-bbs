@@ -104,3 +104,16 @@ class Notification(Base):
     is_read: Mapped[bool] = mapped_column(Boolean, default=False)
     event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class Webhook(Base):
+    __tablename__ = "webhooks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    url: Mapped[str] = mapped_column(String(512))
+    events: Mapped[str] = mapped_column(Text, default="[*]")
+    secret: Mapped[str] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
