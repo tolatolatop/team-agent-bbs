@@ -9,7 +9,9 @@ from sqlalchemy import and_, delete, func, or_, select
 
 from .db import SessionLocal
 from .default_behaviors import ensure_board_favorite, ensure_post_favorite
-from .models import Board, BoardFavorite, Favorite, Notification, Post, Reply, Token, User, now_utc
+from .event_bus import produce_event_sync
+from .models import Board, BoardFavorite, Favorite, Notification, Post, Reply, Token, User, Webhook, now_utc
+from .schemas import EventType, StructuredEvent
 
 
 def _to_iso(dt: datetime) -> str:
@@ -441,6 +443,12 @@ def notify_post_followers(db, post: Post, actor_user_id: int, event_type: str, e
                 event_at=event_at,
             )
         )
+    # Produce structured event for webhook dispatch
+    _produce_notification_event(
+        EventType(event_type),
+        post_id=post.id,
+        source_user_id=actor_user_id,
+    )
 
 
 def notify_all_users_board_created(db, board: Board, actor_user_id: int, event_at: datetime) -> None:
@@ -460,6 +468,12 @@ def notify_all_users_board_created(db, board: Board, actor_user_id: int, event_a
                 event_at=event_at,
             )
         )
+    # Produce structured event for webhook dispatch
+    _produce_notification_event(
+        EventType("board_created"),
+        board_id=board.id,
+        source_user_id=actor_user_id,
+    )
 
 
 def notify_board_followers_new_post(db, post: Post, actor_user_id: int, event_at: datetime) -> None:
@@ -499,6 +513,13 @@ def notify_board_followers_new_post(db, post: Post, actor_user_id: int, event_at
                 event_at=event_at,
             )
         )
+    # Produce structured event for webhook dispatch
+    _produce_notification_event(
+        EventType("new_post_in_board"),
+        post_id=post.id,
+        board_id=post.board_id,
+        source_user_id=actor_user_id,
+    )
 
 
 def update_post(post_id: int, payload: dict[str, Any], current_user_id: int) -> dict[str, Any]:
@@ -871,3 +892,102 @@ def simple_search(keyword: str) -> dict[str, Any]:
                 for reply in replies
             ],
         }
+
+# -- Webhook CRUD --------------------------------------------
+
+
+def _webhook_out(wh: Webhook) -> dict[str, object]:
+    return {
+        "id": wh.id,
+        "user_id": wh.user_id,
+        "url": wh.url,
+        "events": json.loads(wh.events),
+        "is_active": wh.is_active,
+        "created_at": _to_iso(wh.created_at),
+        "updated_at": _to_iso(wh.updated_at),
+    }
+
+
+def create_webhook(payload: dict[str, object], current_user_id: int) -> dict[str, object]:
+    with SessionLocal.begin() as db:
+        user = db.execute(select(User).where(User.id == current_user_id)).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+
+        now = now_utc()
+        wh = Webhook(
+            user_id=current_user_id,
+            url=payload["url"],
+            events=json.dumps(payload["events"]),
+            secret=payload["secret"],
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(wh)
+        db.flush()
+        db.refresh(wh)
+        return _webhook_out(wh)
+
+
+def list_webhooks(current_user_id: int) -> list[dict[str, object]]:
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(Webhook).where(Webhook.user_id == current_user_id).order_by(Webhook.created_at.desc())
+        ).scalars().all()
+        return [_webhook_out(wh) for wh in rows]
+
+
+def delete_webhook(webhook_id: int, current_user_id: int) -> dict[str, str]:
+    with SessionLocal.begin() as db:
+        wh = db.execute(select(Webhook).where(Webhook.id == webhook_id)).scalar_one_or_none()
+        if wh is None:
+            raise HTTPException(status_code=404, detail="webhook not found")
+        if wh.user_id != current_user_id:
+            raise HTTPException(status_code=403, detail="forbidden")
+        db.execute(delete(Webhook).where(Webhook.id == webhook_id))
+        return {"message": "webhook deleted"}
+
+
+def list_active_webhooks_for_event(event_type: str) -> list[Webhook]:
+    """Return all active webhooks whose event list matches event_type."""
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(Webhook).where(Webhook.is_active.is_(True))
+        ).scalars().all()
+    matched: list[Webhook] = []
+    for wh in rows:
+        events = json.loads(wh.events)
+        if "*" in events or event_type in events:
+            matched.append(wh)
+    return matched
+
+
+# -- Event bus integration (backward compatible) --------------
+
+
+def _produce_notification_event(
+    event_type: EventType,
+    *,
+    post_id: int | None = None,
+    reply_id: int | None = None,
+    board_id: int | None = None,
+    source_user_id: int | None = None,
+    snippet: str = "",
+    action_url: str = "",
+) -> None:
+    """Fire-and-forget produce a structured event to the event bus."""
+    try:
+        event = StructuredEvent(
+            event_type=event_type,
+            post_id=post_id,
+            reply_id=reply_id,
+            board_id=board_id,
+            source_user_id=source_user_id,
+            snippet=snippet,
+            action_url=action_url,
+        )
+        produce_event_sync(event)
+    except Exception:
+        # Best-effort: event bus failures must not break the main flow.
+        pass
