@@ -239,3 +239,30 @@ def pin_post(post_id: int, user_id: int = Depends(current_user_id)) -> dict:
 @app.post("/posts/{post_id}/unpin", response_model=schemas.PostOut)
 def unpin_post(post_id: int, user_id: int = Depends(current_user_id)) -> dict:
     return services.unpin_post(post_id, current_user_id=user_id)
+
+
+# ── Webhook CRUD ──────────────────────────────────────────────────────────────────
+
+
+@app.post("/users/{user_id}/webhooks", response_model=schemas.WebhookOut, status_code=201)
+def create_webhook(user_id: int, payload: schemas.WebhookCreateRequest, auth_user_id: int = Depends(current_user_id)) -> dict:
+    if auth_user_id != user_id:
+        from fastapi.exceptions import HTTPException
+        raise HTTPException(status_code=403, detail="forbidden")
+    return services.create_webhook(payload.model_dump(), current_user_id=auth_user_id)
+
+
+@app.get("/users/{user_id}/webhooks", response_model=list[schemas.WebhookOut])
+def list_webhooks(user_id: int, auth_user_id: int = Depends(current_user_id)) -> list[dict]:
+    if auth_user_id != user_id:
+        from fastapi.exceptions import HTTPException
+        raise HTTPException(status_code=403, detail="forbidden")
+    return services.list_webhooks(current_user_id=auth_user_id)
+
+
+@app.delete("/users/{user_id}/webhooks/{webhook_id}", response_model=schemas.MessageResponse)
+def delete_webhook(user_id: int, webhook_id: int, auth_user_id: int = Depends(current_user_id)) -> dict:
+    if auth_user_id != user_id:
+        from fastapi.exceptions import HTTPException
+        raise HTTPException(status_code=403, detail="forbidden")
+    return services.delete_webhook(webhook_id, current_user_id=auth_user_id)
