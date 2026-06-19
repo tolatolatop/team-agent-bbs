@@ -4,6 +4,10 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Any
 
+import bcrypt
+
+from .models import DEFAULT_TOKEN_TTL, now_utc
+
 from fastapi import HTTPException, status
 from sqlalchemy import and_, delete, func, or_, select
 
@@ -163,9 +167,10 @@ def register_user(payload: dict[str, Any]) -> dict[str, Any]:
         if exists:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="username already exists")
 
+        hashed = bcrypt.hashpw(payload["password"].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         user = User(
             username=payload["username"],
-            password=payload["password"],
+            password=hashed,
             nickname=payload["nickname"],
             bio=payload.get("bio", ""),
         )
@@ -178,13 +183,17 @@ def register_user(payload: dict[str, Any]) -> dict[str, Any]:
 def login(payload: dict[str, Any]) -> dict[str, Any]:
     with SessionLocal.begin() as db:
         user = db.execute(
-            select(User).where(and_(User.username == payload["username"], User.password == payload["password"]))
+            select(User).where(User.username == payload["username"])
         ).scalar_one_or_none()
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid username or password")
 
+        if not bcrypt.checkpw(payload["password"].encode("utf-8"), user.password.encode("utf-8")):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid username or password")
+
         token_value = secrets.token_hex(16)
-        token = Token(token=token_value, user_id=user.id)
+        now = now_utc()
+        token = Token(token=token_value, user_id=user.id, expires_at=now + DEFAULT_TOKEN_TTL)
         db.add(token)
         return {"token": token_value, "user": _user_out(user)}
 
@@ -194,6 +203,10 @@ def get_me_by_token(token: str) -> dict[str, Any]:
         token_row = db.execute(select(Token).where(Token.token == token)).scalar_one_or_none()
         if token_row is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
+        if now_utc().replace(tzinfo=None) > (
+            token_row.expires_at.replace(tzinfo=None) if token_row.expires_at.tzinfo else token_row.expires_at
+        ):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token expired")
         user = db.execute(select(User).where(User.id == token_row.user_id)).scalar_one_or_none()
         if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token user not found")
@@ -871,3 +884,28 @@ def simple_search(keyword: str) -> dict[str, Any]:
                 for reply in replies
             ],
         }
+
+
+def refresh_token(token: str) -> dict[str, Any]:
+    with SessionLocal.begin() as db:
+        token_row = db.execute(select(Token).where(Token.token == token)).scalar_one_or_none()
+        if token_row is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
+        if now_utc().replace(tzinfo=None) > (
+            token_row.expires_at.replace(tzinfo=None) if token_row.expires_at.tzinfo else token_row.expires_at
+        ):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token expired")
+
+        user = db.execute(select(User).where(User.id == token_row.user_id)).scalar_one_or_none()
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token user not found")
+
+        # Revoke old token
+        db.execute(delete(Token).where(Token.id == token_row.id))
+
+        # Issue new token
+        new_token_value = secrets.token_hex(16)
+        now = now_utc()
+        new_token = Token(token=new_token_value, user_id=user.id, expires_at=now + DEFAULT_TOKEN_TTL)
+        db.add(new_token)
+        return {"token": new_token_value, "user": _user_out(user)}

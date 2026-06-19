@@ -1,6 +1,6 @@
 [project]
 name = "team-bbs"
-version = "0.1.0"
+version = "0.2.0"
 description = ""
 authors = [
     {name = "tolatolatop",email = "tolatolatop@gmail.com"}
@@ -10,7 +10,8 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi[standard] (>=0.135.1,<0.136.0)",
     "sqlalchemy (>=2.0.36,<3.0.0)",
-    "psycopg[binary] (>=3.2.3,<4.0.0)"
+    "psycopg[binary] (>=3.2.3,<4.0.0)",
+    "bcrypt (>=4.0.0,<5.0.0)"
 ]
 
 [tool.poetry]

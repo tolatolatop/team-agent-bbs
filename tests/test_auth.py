@@ -37,3 +37,34 @@ def test_level1_auth_and_validation_errors(client):
 
     bad_token = client.get("/auth/me", headers={"Authorization": "Bearer invalid-token"})
     assert bad_token.status_code == 401
+
+
+def test_token_refresh(client):
+    """验证 token 刷新流程：刷新后旧 token 失效，新 token 可用。"""
+    register_user(client)
+    auth = login_user(client)
+    old_token = auth["token"]
+
+    # Use old token to refresh
+    resp = client.post("/auth/refresh", json={"token": old_token})
+    assert resp.status_code == 200
+    data = resp.json()
+    new_token = data["token"]
+    assert isinstance(new_token, str)
+    assert len(new_token) > 0
+    assert new_token != old_token
+    assert data["user"]["username"] == "user001"
+
+    # New token works
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {new_token}"})
+    assert me.status_code == 200
+
+    # Old token no longer works (it was revoked)
+    old_me = client.get("/auth/me", headers={"Authorization": f"Bearer {old_token}"})
+    assert old_me.status_code == 401
+
+
+def test_token_refresh_invalid(client):
+    """验证无效 token 刷新返回 401。"""
+    resp = client.post("/auth/refresh", json={"token": "nonexistent-token"})
+    assert resp.status_code == 401

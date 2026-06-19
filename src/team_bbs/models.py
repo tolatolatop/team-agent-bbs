@@ -1,7 +1,10 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+DEFAULT_TOKEN_TTL = timedelta(days=1)
 
 
 def now_utc() -> datetime:
@@ -31,6 +34,9 @@ class Token(Base):
     token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: now_utc() + DEFAULT_TOKEN_TTL
+    )
 
 
 class Board(Base):
