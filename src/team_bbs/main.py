@@ -129,9 +129,24 @@ def list_posts(
     return services.list_posts(page=page, size=size, board_id=board_id, keyword=keyword)
 
 
+@app.get("/posts/plaintext", response_model=schemas.PaginatedResponse)
+def list_posts_plaintext(
+    page: int = Query(1, ge=1),
+    size: int = Query(10, ge=1, le=100),
+    board_id: int | None = Query(default=None),
+    keyword: str | None = Query(default=None),
+) -> dict:
+    return services.list_posts(page=page, size=size, board_id=board_id, keyword=keyword, display_mode="plaintext")
+
+
 @app.get("/posts/{post_id}", response_model=schemas.PostOut)
 def get_post(post_id: int) -> dict:
     return services.get_post(post_id)
+
+
+@app.get("/posts/{post_id}/plaintext", response_model=schemas.PostOut)
+def get_post_plaintext(post_id: int) -> dict:
+    return services.get_post(post_id, display_mode="plaintext")
 
 
 @app.put("/posts/{post_id}", response_model=schemas.PostOut)
@@ -152,6 +167,11 @@ def create_reply(post_id: int, payload: schemas.ReplyCreateRequest, user_id: int
 @app.get("/posts/{post_id}/replies", response_model=schemas.PostRepliesViewResponse)
 def list_replies(post_id: int, page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=100)) -> dict:
     return services.list_replies(post_id=post_id, page=page, size=size)
+
+
+@app.get("/posts/{post_id}/replies/plaintext", response_model=schemas.PostRepliesViewResponse)
+def list_replies_plaintext(post_id: int, page: int = Query(1, ge=1), size: int = Query(10, ge=1, le=100)) -> dict:
+    return services.list_replies(post_id=post_id, page=page, size=size, display_mode="plaintext")
 
 
 @app.put("/replies/{reply_id}", response_model=schemas.ReplyOut)

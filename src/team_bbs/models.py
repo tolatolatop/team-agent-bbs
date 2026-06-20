@@ -57,6 +57,7 @@ class Post(Base):
     title: Mapped[str] = mapped_column(String(200))
     content: Mapped[str] = mapped_column(Text)
     tags: Mapped[str] = mapped_column(Text, default="[]")
+    multimedia: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)

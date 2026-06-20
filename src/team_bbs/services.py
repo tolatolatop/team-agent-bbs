@@ -68,12 +68,32 @@ def _build_post_title_map(db, post_ids: set[int | None]) -> dict[int, str]:
     return {post.id: post.title for post in posts}
 
 
+def _render_multimedia_plaintext(multimedia: list[dict]) -> str:
+    """Render multimedia items as textual placeholders for plaintext mode."""
+    return "\n\n".join(
+        f"[{_media_label(item)}: {item.get('description', '') or '无描述'}]({item['url']})"
+        for item in multimedia
+    )
+
+
+def _media_label(item: dict) -> str:
+    return {"image": "图片", "video": "视频"}.get(item.get("type", ""), "多媒体")
+
+
 def _post_out(
     post: Post,
     board_name: str = "",
     author_username: str = "",
     author_nickname: str = "",
+    display_mode: str = "multimedia",
 ) -> dict[str, Any]:
+    multimedia_raw = json.loads(post.multimedia or "[]")
+    if display_mode == "plaintext" and multimedia_raw:
+        plaintext_appendix = _render_multimedia_plaintext(multimedia_raw)
+        rendered_content = post.content + "\n\n---\n" + plaintext_appendix if plaintext_appendix else post.content
+    else:
+        rendered_content = post.content
+
     return {
         "id": post.id,
         "board_id": post.board_id,
@@ -82,8 +102,9 @@ def _post_out(
         "author_username": author_username,
         "author_nickname": author_nickname,
         "title": post.title,
-        "content": post.content,
+        "content": rendered_content,
         "tags": json.loads(post.tags or "[]"),
+        "multimedia": multimedia_raw if display_mode == "multimedia" else [],
         "is_pinned": post.is_pinned,
         "created_at": _to_iso(post.created_at),
         "updated_at": _to_iso(post.updated_at),
@@ -285,6 +306,7 @@ def create_post(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]
             title=payload["title"],
             content=payload["content"],
             tags=json.dumps(payload.get("tags", [])),
+            multimedia=json.dumps(payload.get("multimedia", [])),
             created_at=now,
             updated_at=now,
         )
@@ -302,7 +324,7 @@ def create_post(payload: dict[str, Any], current_user_id: int) -> dict[str, Any]
         )
 
 
-def list_posts(page: int, size: int, board_id: int | None = None, keyword: str | None = None) -> dict[str, Any]:
+def list_posts(page: int, size: int, board_id: int | None = None, keyword: str | None = None, display_mode: str = "multimedia") -> dict[str, Any]:
     with SessionLocal() as db:
         stmt = select(Post)
         if board_id is not None:
@@ -327,6 +349,7 @@ def list_posts(page: int, size: int, board_id: int | None = None, keyword: str |
                     board_name=board_name_map.get(post.board_id, ""),
                     author_username=username,
                     author_nickname=nickname,
+                    display_mode=display_mode,
                 )
             )
         return paginate(items, page, size)
@@ -369,6 +392,7 @@ def pin_post(post_id: int, current_user_id: int) -> dict[str, Any]:
             board_name=board_name_map.get(post.board_id, ""),
             author_username=username,
             author_nickname=nickname,
+            display_mode=display_mode,
         )
 
 
@@ -405,7 +429,7 @@ def unpin_post(post_id: int, current_user_id: int) -> dict[str, Any]:
         )
 
 
-def get_post(post_id: int) -> dict[str, Any]:
+def get_post(post_id: int, display_mode: str = "multimedia") -> dict[str, Any]:
     with SessionLocal() as db:
         post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
         if post is None:
@@ -418,6 +442,7 @@ def get_post(post_id: int) -> dict[str, Any]:
             board_name=board_name_map.get(post.board_id, ""),
             author_username=username,
             author_nickname=nickname,
+            display_mode=display_mode,
         )
 
 
@@ -549,6 +574,8 @@ def update_post(post_id: int, payload: dict[str, Any], current_user_id: int) -> 
             post.content = payload["content"]
         if payload.get("tags") is not None:
             post.tags = json.dumps(payload["tags"])
+        if payload.get("multimedia") is not None:
+            post.multimedia = json.dumps(payload["multimedia"])
         post.updated_at = now_utc()
         notify_post_followers(db, post=post, actor_user_id=current_user_id, event_type="post_updated", event_at=post.updated_at)
         db.flush()
@@ -603,7 +630,7 @@ def create_reply(post_id: int, payload: dict[str, Any], current_user_id: int) ->
         )
 
 
-def list_replies(post_id: int, page: int, size: int) -> dict[str, Any]:
+def list_replies(post_id: int, page: int, size: int, display_mode: str = "multimedia") -> dict[str, Any]:
     with SessionLocal() as db:
         post = db.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
         if post is None:
@@ -631,6 +658,7 @@ def list_replies(post_id: int, page: int, size: int) -> dict[str, Any]:
             board_name=board_name_map.get(post.board_id, ""),
             author_username=post_username,
             author_nickname=post_nickname,
+            display_mode=display_mode,
         )
         return result
 

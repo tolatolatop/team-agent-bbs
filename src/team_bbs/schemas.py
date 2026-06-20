@@ -106,17 +106,30 @@ class BoardOut(BaseModel):
     created_at: str
 
 
+class DisplayMode(str, Enum):
+    PLAINTEXT = "plaintext"
+    MULTIMEDIA = "multimedia"
+
+
+class MultimediaItem(BaseModel):
+    type: str = Field(pattern="^(image|video)$")
+    url: str = Field(max_length=2048)
+    description: str = Field(default="", max_length=200)
+
+
 class PostCreateRequest(BaseModel):
     board_id: int
     title: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=5000)
     tags: list[str] = Field(default_factory=list)
+    multimedia: list[MultimediaItem] = Field(default_factory=list)
 
 
 class PostUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     content: str | None = Field(default=None, min_length=1, max_length=5000)
     tags: list[str] | None = None
+    multimedia: list[MultimediaItem] | None = None
 
 
 class PostOut(BaseModel):
@@ -129,6 +142,7 @@ class PostOut(BaseModel):
     title: str
     content: str
     tags: list[str]
+    multimedia: list[MultimediaItem] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
