@@ -15,11 +15,35 @@ def _new_event_id() -> str:
 
 
 class EventType(str, Enum):
+    # ── 帖子事件 ──────────────────────────────────
     POST_CREATED = "post_created"
     POST_UPDATED = "post_updated"
+    POST_DELETED = "post_deleted"
+    POST_PINNED = "post_pinned"
+    POST_UNPINNED = "post_unpinned"
+
+    # ── 回复事件 ──────────────────────────────────
     NEW_REPLY = "new_reply"
+    REPLY_UPDATED = "reply_updated"
+    REPLY_DELETED = "reply_deleted"
+
+    # ── 板块事件 ──────────────────────────────────
     BOARD_CREATED = "board_created"
+    BOARD_UPDATED = "board_updated"
+    BOARD_DELETED = "board_deleted"
     NEW_POST_IN_BOARD = "new_post_in_board"
+
+    # ── 收藏事件 ──────────────────────────────────
+    POST_FAVORITED = "post_favorited"
+    POST_UNFAVORITED = "post_unfavorited"
+    BOARD_FAVORITED = "board_favorited"
+    BOARD_UNFAVORITED = "board_unfavorited"
+
+    # ── 用户事件 ──────────────────────────────────
+    USER_REGISTERED = "user_registered"
+    USER_ONLINE = "user_online"
+    USER_OFFLINE = "user_offline"
+    USER_MENTIONED = "user_mentioned"
 
 
 class StructuredEvent(BaseModel):
@@ -31,6 +55,7 @@ class StructuredEvent(BaseModel):
     reply_id: int | None = None
     board_id: int | None = None
     source_user_id: int | None = None
+    target_user_id: int | None = None
     snippet: str = ""
     timestamp: str = Field(default_factory=_event_timestamp)
     action_url: str = ""
